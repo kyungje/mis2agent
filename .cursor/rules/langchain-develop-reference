@@ -1,0 +1,12 @@
+description: |
+  When generating or recommending new code, always refer to the code style, naming conventions, architecture, and best practices found in the reference folder.
+  The reference folder contains standard and exemplary implementations for this project.
+
+globs:
+  - reference/**
+rules:
+  - "Ensure that new code matches the code style, naming conventions, function structure, and commenting practices used in the reference folder."
+  - "Whenever possible, reuse utility functions or patterns that already exist in the reference folder."
+  - "Follow the module/library import style and code architecture demonstrated in the reference folder files."
+  - "If applicable, write test code in a manner similar to the examples in the reference folder."
+  - "Before implementing new functionality, review related files in the reference folder to maintain consistency."

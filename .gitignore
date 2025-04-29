@@ -71,6 +71,3 @@ dmypy.json
 
 # mkdocs documentation
 /site
-
-# Cursor
-.cursor/ 
