@@ -5,8 +5,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 
 class LegalRAGTool(BaseTool):
-    name = "legal_rag_search"
-    description = "법조문이나 법령에 대한 질문에 답하기 위해 관련 문서를 검색합니다."
+    name: str = "legal_rag_search"
+    description: str = "법조문이나 법령에 대한 질문에 답하기 위해 관련 문서를 검색합니다."
     
     def __init__(self, vectorstore: FAISS):
         self.vectorstore = vectorstore

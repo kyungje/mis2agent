@@ -63,11 +63,8 @@ class Agent:
             )
             
             if last_user_message:
-                # 대화 기록 생성 (이전 메시지들)
-                chat_history = [
-                    f"{msg['role']}: {msg['content']}"
-                    for msg in messages[:-1]  # 마지막 메시지 제외
-                ]
+                # 대화 기록을 원본 형식 그대로 유지
+                chat_history = messages[:-1]  # 마지막 메시지 제외
                 
                 # 법령 관련 질문인지 확인하고 적절한 Agent 선택
                 for agent in self.agents:

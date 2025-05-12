@@ -18,8 +18,13 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
 
+# Vector store 경로 설정
+vectorstore_path = os.getenv("VECTORSTORE_PATH")
+if not vectorstore_path:
+    logger.warning("VECTORSTORE_PATH is not set. Legal agent will use dummy data.")
+
 # Agent 초기화
-agent = Agent()
+agent = Agent(vectorstore_path=vectorstore_path or "dummy")
 
 app = FastAPI(title="Chat API")
 

@@ -32,6 +32,13 @@ poetry install
 OPENAI_API_KEY=your_api_key_here
 ```
 
+## 추가 모듈 설치
+
+프로젝트 실행에 필요한 추가 모듈을 설치하려면 다음 명령어를 사용하세요:
+```bash
+poetry add langchain_openai langchain_community
+```
+
 ## 실행 방법
 
 ### FastAPI 서버 실행
@@ -86,4 +93,12 @@ poetry run pytest
 ## 주의사항
 - FastAPI 서버와 Streamlit UI를 동시에 실행하려면 두 개의 터미널이 필요합니다.
 - FastAPI 서버가 실행 중이어야 Streamlit UI가 정상적으로 작동합니다.
-- OpenAI API 키가 올바르게 설정되어 있어야 합니다. 
+- OpenAI API 키가 올바르게 설정되어 있어야 합니다.
+
+## Vector Store 설정
+법령 관련 질문에 답변하기 위해 FAISS vector store를 사용합니다. vector store 경로는 `.env` 파일에 다음과 같이 설정합니다:
+```
+VECTORSTORE_PATH=/path/to/your/vectorstore
+```
+
+현재는 더미 데이터로 설정되어 있으며, 실제 법령 데이터로 업데이트 시 위 경로를 실제 vector store 경로로 변경하면 됩니다. 

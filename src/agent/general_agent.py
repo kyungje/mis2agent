@@ -22,8 +22,21 @@ class GeneralAgent(BaseAgent):
         if chat_history is None:
             chat_history = []
             
-        chain = self.prompt | self.llm
-        response = chain.invoke({"question": question})
+        # 대화 기록을 메시지 형식으로 변환
+        messages = [
+            {"role": "system", "content": "당신은 친절하고 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 최선을 다해 답변해주세요."}
+        ]
+        
+        # 이전 대화 기록 추가
+        for msg in chat_history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append(msg)
+        
+        # 현재 질문 추가
+        messages.append({"role": "user", "content": question})
+        
+        # LLM 호출
+        response = self.llm.invoke(messages)
         
         return response.content
     
