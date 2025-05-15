@@ -7,6 +7,7 @@ ai-agent/
 │   ├── agent/      # AI 에이전트 관련 코드
 │   ├── api/        # FastAPI 백엔드
 │   ├── config/     # 설정 파일
+│   ├── index/      # FAISS 인덱스 파일
 │   └── ui/         # Streamlit UI
 ├── tests/          # 테스트 코드
 ├── .env           # 환경 변수
@@ -30,6 +31,7 @@ poetry install
 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
 OPENAI_API_KEY=your_api_key_here
+INDEX_PATH=src/index/faiss_index.idx
 ```
 
 ## 추가 모듈 설치
@@ -95,10 +97,20 @@ poetry run pytest
 - FastAPI 서버가 실행 중이어야 Streamlit UI가 정상적으로 작동합니다.
 - OpenAI API 키가 올바르게 설정되어 있어야 합니다.
 
-## Vector Store 설정
-법령 관련 질문에 답변하기 위해 FAISS vector store를 사용합니다. vector store 경로는 `.env` 파일에 다음과 같이 설정합니다:
+## FAISS 인덱스 설정
+서울특별시 도시가스회사 공급규정 관련 질문에 답변하기 위해 FAISS 인덱스를 사용합니다. 
+
+1. `.env` 파일 생성:
+프로젝트 루트 디렉토리에 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
-VECTORSTORE_PATH=/path/to/your/vectorstore
+OPENAI_API_KEY=your_api_key_here
+INDEX_PATH=src/index/faiss_index.idx
 ```
 
-현재는 더미 데이터로 설정되어 있으며, 실제 법령 데이터로 업데이트 시 위 경로를 실제 vector store 경로로 변경하면 됩니다. 
+2. 인덱스 파일 확인:
+- `src/index/faiss_index.idx` 파일이 존재하는지 확인합니다.
+- 파일이 없다면 서울특별시 도시가스회사 공급규정 문서를 기반으로 인덱스를 생성해야 합니다.
+
+3. 주의사항:
+- `INDEX_PATH`가 설정되지 않은 경우, 시스템은 더미 데이터를 사용하게 되어 서울특별시 도시가스회사 공급규정 관련 질문에 답변할 수 없습니다.
+- 실제 서비스 운영을 위해서는 반드시 올바른 FAISS 인덱스 파일을 설정해야 합니다. 
