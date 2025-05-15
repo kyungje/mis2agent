@@ -31,7 +31,7 @@ poetry install
 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
 OPENAI_API_KEY=your_api_key_here
-INDEX_PATH=src/index/faiss_index.idx
+INDEX_PATH=src/index/index.idx
 ```
 
 ## 추가 모듈 설치
@@ -104,11 +104,11 @@ poetry run pytest
 프로젝트 루트 디렉토리에 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
 OPENAI_API_KEY=your_api_key_here
-INDEX_PATH=src/index/faiss_index.idx
+INDEX_PATH=src/index/index.idx
 ```
 
 2. 인덱스 파일 확인:
-- `src/index/faiss_index.idx` 파일이 존재하는지 확인합니다.
+- `src/index/index.idx` 파일이 존재하는지 확인합니다.
 - 파일이 없다면 서울특별시 도시가스회사 공급규정 문서를 기반으로 인덱스를 생성해야 합니다.
 
 3. 주의사항:
