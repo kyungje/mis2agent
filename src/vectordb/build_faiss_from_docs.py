@@ -68,8 +68,8 @@ def build_vector_index():
     index.add(embeddings)
 
     # 저장 경로를 db/ 하위로 변경
-    faiss_index_path = os.path.join(DB_DIR, "faiss_index.idx")
-    chunks_path = os.path.join(DB_DIR, "chunks.pkl")
+    faiss_index_path = os.path.join(DB_DIR, "index.faiss")
+    chunks_path = os.path.join(DB_DIR, "index.pkl")
 
     faiss.write_index(index, faiss_index_path)
     with open(chunks_path, "wb") as f:
@@ -86,8 +86,8 @@ def search_query(query, top_k=3):
     # 모델, 인덱스, chunks 불러오기
     print(f"\n🔍 검색어: {query}")
     model = SentenceTransformer("all-MiniLM-L6-v2")
-    index = faiss.read_index(os.path.join(DB_DIR, "faiss_index.idx"))
-    with open(os.path.join(DB_DIR, "chunks.pkl"), "rb") as f:
+    index = faiss.read_index(os.path.join(DB_DIR, "index.faiss"))
+    with open(os.path.join(DB_DIR, "index.pkl"), "rb") as f:
         chunks = pickle.load(f)
 
     query_vec = model.encode([query], convert_to_numpy=True)
