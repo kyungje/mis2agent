@@ -71,3 +71,6 @@ dmypy.json
 
 # mkdocs documentation
 /site
+
+# vector db cache
+.cache/
