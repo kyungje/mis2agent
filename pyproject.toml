@@ -20,6 +20,10 @@ requests = "^2.31.0"
 langchain_openai = "0.*"
 langchain_community = "0.*"
 faiss-cpu = "^1.11.0"
+sentence-transformers = "^4.1.0"
+langchain-huggingface = "^0.2.0"
+pymupdf = "^1.25.5"
+python-docx = "^1.1.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
