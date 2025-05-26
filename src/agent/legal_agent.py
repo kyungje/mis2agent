@@ -62,12 +62,30 @@ class LegalAgent(BaseAgent):
         return response["output"]
     
     def can_handle(self, question: str) -> bool:
-        """서울특별시 도시가스회사 공급규정 관련 질문인지 확인합니다."""
-        # 관련 키워드 목록
-        keywords = [
-            "서울특별시", "도시가스", "공급규정", "가스공급", "가스요금",
-            "가스사용", "가스계량", "가스설비", "가스안전", "가스공급계약"
-        ]
-        
-        # 질문에 관련 키워드가 포함되어 있는지 확인
-        return any(keyword in question for keyword in keywords) 
+        """서울특별시 도시가스회사 공급규정 관련 질문인지 AI를 통해 확인합니다."""
+        try:
+            # 질문 의도 파악을 위한 프롬프트
+            prompt = f"""다음 질문이 서울특별시 도시가스회사 공급규정과 관련된 질문인지 판단해주세요.
+            질문: {question}
+            
+            다음 중 하나라도 해당되면 'yes'를, 그렇지 않으면 'no'를 출력해주세요:
+            1. 서울특별시 도시가스회사의 공급규정, 요금, 계약 등에 관한 질문
+            2. 가스 공급, 사용, 안전, 설비 등에 관한 질문
+            3. 도시가스 관련 법규나 규정에 관한 질문
+            
+            답변은 반드시 'yes' 또는 'no'로만 해주세요."""
+
+            # LLM을 통해 질문 의도 파악
+            response = self.llm.invoke(prompt)
+            result = response.content.strip().lower()
+            
+            return result == 'yes'
+            
+        except Exception as e:
+            print(f"Error in can_handle: {e}")
+            # 오류 발생 시 기본 키워드 기반 판단으로 폴백
+            keywords = [
+                "서울특별시", "도시가스", "공급규정", "가스공급", "가스요금",
+                "가스사용", "가스계량", "가스설비", "가스안전", "가스공급계약"
+            ]
+            return any(keyword in question for keyword in keywords) 
