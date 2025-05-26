@@ -31,7 +31,7 @@ poetry install
 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
 OPENAI_API_KEY=your_api_key_here
-INDEX_PATH=src/index/index.idx
+INDEX_PATH=src/vectordb/db
 ```
 
 ## 추가 모듈 설치
@@ -104,7 +104,7 @@ poetry run pytest
 프로젝트 루트 디렉토리에 `.env` 파일을 생성하고 다음 내용을 추가합니다:
 ```
 OPENAI_API_KEY=your_api_key_here
-INDEX_PATH=src/index/index.idx
+INDEX_PATH=src/vectordb/db
 ```
 
 2. 인덱스 파일 확인:
