@@ -54,10 +54,13 @@ class GeneralAgent(BaseAgent):
         # 현재 질문 추가
         messages.append({"role": "user", "content": question})
         
-        # LLM 호출
-        response = self.llm.invoke(messages)
-        
-        return response.content
+        try:
+            # LLM 호출
+            response = self.llm.invoke(messages)
+            return response.content
+        except Exception as e:
+            # 에러 발생 시 내부 작업 내역 노출 방지
+            return "죄송합니다. 답변 생성 중 오류가 발생했습니다."
     
     def can_handle(self, question: str) -> bool:
         """일반 질문인지 확인합니다."""

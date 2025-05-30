@@ -59,12 +59,15 @@ class LegalAgent(BaseAgent):
             search_result = self.rag_tool._run(question)
             formatted_history.append(f"assistant: [참고 문서 원문]\n{search_result}")
 
-        response = self.agent_executor.invoke({
-            "question": question,
-            "chat_history": formatted_history
-        })
-        
-        return response["output"]
+        try:
+            response = self.agent_executor.invoke({
+                "question": question,
+                "chat_history": formatted_history
+            })
+            return response["output"]
+        except Exception as e:
+            # 에러 발생 시 내부 작업 내역(agent_scratchpad 등) 노출 방지
+            return "죄송합니다. 답변 생성 중 오류가 발생했습니다."
     
     def can_handle(self, question: str) -> bool:
         """서울특별시 도시가스회사 공급규정 관련 질문인지 AI를 통해 확인합니다."""
