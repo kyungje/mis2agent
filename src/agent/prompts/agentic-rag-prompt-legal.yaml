@@ -26,7 +26,4 @@ template: |
   {question}
 
   대화 기록:
-  {chat_history} 
-
-  에이전트 작업 공간:
-  {agent_scratchpad}
+  {chat_history}
