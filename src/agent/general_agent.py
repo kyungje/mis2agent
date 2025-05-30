@@ -7,7 +7,7 @@ class GeneralAgent(BaseAgent):
     def __init__(self):
         # LLM 초기화
         self.llm = ChatOpenAI(
-            model_name="gpt-4",
+            model_name="gpt-4-turbo",
             temperature=0.7
         )
         
@@ -22,9 +22,28 @@ class GeneralAgent(BaseAgent):
         if chat_history is None:
             chat_history = []
             
-        # 대화 기록을 메시지 형식으로 변환
+        # 참고 문서가 있는지 확인
+        reference_texts = []
+        for msg in chat_history:
+            if (
+                isinstance(msg, dict)
+                and msg.get("role") == "assistant"
+                and msg.get("content", "").startswith("[참고 문서")
+            ):
+                reference_texts.append(msg["content"])
+        
+        # system 프롬프트 동적 생성
+        if reference_texts:
+            system_prompt = (
+                "당신은 친절하고 도움이 되는 AI 어시스턴트입니다. "
+                "아래 참고 문서 내용을 반드시 참고하여 사용자의 질문에 답변하세요.\n"
+                f"참고 문서:\n{chr(10).join(reference_texts)}"
+            )
+        else:
+            system_prompt = "당신은 친절하고 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 최선을 다해 답변해주세요."
+        
         messages = [
-            {"role": "system", "content": "당신은 친절하고 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 최선을 다해 답변해주세요."}
+            {"role": "system", "content": system_prompt}
         ]
         
         # 이전 대화 기록 추가

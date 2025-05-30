@@ -14,7 +14,7 @@ class Agent:
     def __init__(self, index_path: str):
         # OpenAI 클라이언트 초기화
         self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.model = "gpt-4"  # 기본 모델 설정
+        self.model = "gpt-4-turbo"  # 기본 모델 설정
         
         # 각 Agent 초기화
         self.legal_agent = LegalAgent(index_path)

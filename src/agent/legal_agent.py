@@ -9,7 +9,7 @@ class LegalAgent(BaseAgent):
     def __init__(self, index_path: str):
         # LLM 초기화
         self.llm = ChatOpenAI(
-            model_name="gpt-4",
+            model_name="gpt-4-turbo",
             temperature=0
         )
         
@@ -53,7 +53,12 @@ class LegalAgent(BaseAgent):
         for msg in chat_history[-3:]:  # 최근 3개 메시지만 사용
             if isinstance(msg, dict) and "role" in msg and "content" in msg:
                 formatted_history.append(f"{msg['role']}: {msg['content']}")
-        
+
+        # 현재 질문에 대해 FAISS 검색 결과(원문 전체)를 assistant 역할로 chat history에 추가
+        if self.rag_tool:
+            search_result = self.rag_tool._run(question)
+            formatted_history.append(f"assistant: [참고 문서 원문]\n{search_result}")
+
         response = self.agent_executor.invoke({
             "question": question,
             "chat_history": formatted_history
