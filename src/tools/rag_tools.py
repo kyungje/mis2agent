@@ -55,7 +55,7 @@ class LegalRAGTool(BaseTool):
             logger.info("Initializing retriever")
             self._retriever = self._vectorstore.as_retriever(
                 search_type="similarity",
-                search_kwargs={"k": 5}
+                search_kwargs={"k": 3}  # 검색 결과 수를 3개로 제한
             )
             logger.info("Retriever initialized successfully")
         except Exception as e:

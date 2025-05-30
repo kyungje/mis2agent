@@ -79,8 +79,7 @@ class Agent:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.7,
-                max_tokens=1000
+                temperature=0.7
             )
             
             # 응답 메시지 로깅
