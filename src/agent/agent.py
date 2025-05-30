@@ -33,9 +33,11 @@ class Agent:
         
         # 서울특별시 도시가스회사 공급규정 관련 질문인지 확인
         if self.legal_agent.can_handle(question):
+            logger.info("Selected Agent: Legal Agent")
             return self.legal_agent.run(question, chat_history)
         
         # 그 외의 경우 일반 Agent 사용
+        logger.info("Selected Agent: General Agent")
         return self.general_agent.run(question, chat_history)
 
     async def get_response(self, messages: List[Dict[str, str]]) -> str:
@@ -67,16 +69,17 @@ class Agent:
                 
                 # 서울특별시 도시가스회사 공급규정 관련 질문인지 확인
                 if self.legal_agent.can_handle(last_user_message):
+                    logger.info("Selected Agent: Legal Agent")
                     response = self.legal_agent.run(last_user_message, chat_history)
                     logger.info(f"Legal Agent Response: {response}")
                     return response
             
             # 관련 질문이 아니거나 Agent가 없는 경우 기본 응답 생성
+            logger.info("Selected Agent: General Agent")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.7,
-                max_tokens=1000
+                temperature=0.7
             )
             
             # 응답 메시지 로깅

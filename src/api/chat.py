@@ -5,10 +5,10 @@ import os
 import logging
 from dotenv import load_dotenv
 from src.agent.agent import Agent
+from src.config.logging_config import setup_logging
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logging()
 
 # 환경 변수 로드
 load_dotenv()

@@ -55,7 +55,7 @@ class LegalRAGTool(BaseTool):
             logger.info("Initializing retriever")
             self._retriever = self._vectorstore.as_retriever(
                 search_type="similarity",
-                search_kwargs={"k": 5}
+                search_kwargs={"k": 3}  # 검색 결과 수를 3개로 제한
             )
             logger.info("Retriever initialized successfully")
         except Exception as e:
@@ -67,11 +67,6 @@ class LegalRAGTool(BaseTool):
         """서울특별시 도시가스회사 공급규정 관련 질문에 대한 문서를 검색합니다."""
         logger.info(f"Running search query: {query}")
         
-        # 검색어에 "서울특별시 도시가스회사 공급규정" 관련 키워드가 있는지 확인
-        keywords = ["서울특별시", "도시가스", "공급규정", "가스공급", "가스요금"]
-        if not any(keyword in query for keyword in keywords):
-            logger.info(f"Query does not contain relevant keywords: {query}")
-            return "죄송합니다. 이 도구는 서울특별시 도시가스회사 공급규정에 대한 질문만 처리할 수 있습니다."
         
         try:
             if not self._retriever:

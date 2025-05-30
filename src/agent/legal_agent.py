@@ -48,9 +48,9 @@ class LegalAgent(BaseAgent):
         if not self.can_handle(question):
             return "죄송합니다. 이 에이전트는 서울특별시 도시가스회사 공급규정에 대한 질문만 처리할 수 있습니다."
         
-        # 대화 기록을 문자열 형식으로 변환
+        # 대화 기록을 문자열 형식으로 변환하고 최근 3개만 유지
         formatted_history = []
-        for msg in chat_history:
+        for msg in chat_history[-3:]:  # 최근 3개 메시지만 사용
             if isinstance(msg, dict) and "role" in msg and "content" in msg:
                 formatted_history.append(f"{msg['role']}: {msg['content']}")
         
