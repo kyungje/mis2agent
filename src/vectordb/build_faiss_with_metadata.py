@@ -22,7 +22,7 @@ os.makedirs(DB_DIR, exist_ok=True)
 def read_docx(path):
     doc = Document(path)
     text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
-    return text
+    return [(1, text)]  # 페이지 번호를 1로 지정한 튜플 리스트 반환
 
 def read_pdf(path):
     doc = fitz.open(path)
@@ -105,30 +105,29 @@ def load_document(file_path):
     return []
 
 # === 문장 분할 - 간소화 버전 ===
-def split_text_to_chunks(text_by_page, source_name, chunk_size=100):
+def split_text_to_chunks(text_by_page, source_name, chunk_size=200):
     """
-    문서를 더 작은 청크로 분할합니다(단순화된 버전).
+    문서를 더 작은 청크로 분할합니다(줄 기준 + 의미 단위 유지 + 공백 정리).
     """
     chunks = []
-    
+
     for page_num, page_text in text_by_page:
-        # 텍스트 정규화: 불필요한 공백 제거 및 줄바꿈 표준화
-        page_text = re.sub(r'\s+', ' ', page_text)
-        
-        # 줄바꿈으로 분할
+        #print(f"--- 페이지 {page_num} ---")
+        #print(page_text[:300])  # 디버깅용: 앞부분 미리보기
+
+        # 1. 줄바꿈 유지하며 줄 단위 분리
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
-        
+        # 2. 각 줄의 내부 공백 정리
+        lines = [re.sub(r'\s+', ' ', line) for line in lines]
+
         current_chunk = ""
-        
-        # 각 줄을 처리
+
         for line in lines:
-            # 줄 정규화: 단어 사이에 공백이 없는 경우 추가
-            line = re.sub(r'([가-힣])([A-Za-z0-9])', r'\1 \2', line)  # 한글 뒤에 영숫자
-            line = re.sub(r'([A-Za-z0-9])([가-힣])', r'\1 \2', line)  # 영숫자 뒤에 한글
-            
-            # 현재 줄 추가 시 chunk_size를 초과하는지 확인
+            # 한글-영문 공백 정리
+            line = re.sub(r'([가-힣])([A-Za-z0-9])', r'\1 \2', line)
+            line = re.sub(r'([A-Za-z0-9])([가-힣])', r'\1 \2', line)
+
             if len(current_chunk) + len(line) > chunk_size and current_chunk:
-                # 청크 추가 후 새 청크 시작
                 chunks.append({
                     "text": current_chunk,
                     "source": source_name,
@@ -136,107 +135,95 @@ def split_text_to_chunks(text_by_page, source_name, chunk_size=100):
                 })
                 current_chunk = line
             else:
-                # 현재 청크에 줄 추가
-                if current_chunk:
-                    current_chunk += " " + line
-                else:
-                    current_chunk = line
-        
-        # 마지막 청크 추가
+                current_chunk = current_chunk + " " + line if current_chunk else line
+
         if current_chunk:
             chunks.append({
                 "text": current_chunk,
                 "source": source_name,
                 "page": page_num
             })
-    
+
+        # 앞부분이 빈 페이지일 때 최소 1개 청크라도 생성하도록 처리
+        if not chunks:
+            chunks.append({
+                "text": page_text[:chunk_size],
+                "source": source_name,
+                "page": page_num
+            })
+
+    print(f"→ 생성된 청크 수: {len(chunks)}")
     return chunks
 
 # === 인덱스 생성 - 배치 처리 ===
+# === 벡터 인덱스 구축 ===
 def build_langchain_vector_index():
-    print("📂 문서 로딩 및 인덱싱 시작...")
-    
-    # 문서 목록 가져오기
-    files = [f for f in os.listdir(DOCS_DIR) if f.endswith(('.pdf', '.docx'))]
+    print("📂 문서 인덱싱 시작")
+
+    # 문서 목록 불러오기
+    files = [f for f in os.listdir(DOCS_DIR) if f.endswith((".pdf", ".docx"))]
     if not files:
-        print("❌ docs 폴더에 유효한 문서가 없습니다.")
+        print("❌ 인덱싱할 문서 없음")
         return
-    
+
     print(f"총 {len(files)}개 문서 발견")
-    
-    # 임베딩 모델 초기화
-    print("임베딩 모델 초기화 중...")
-    embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    
-    # 기존 인덱스 존재 시 로드, 없으면 새로 생성
-    if os.path.exists(os.path.join(DB_DIR, "index.faiss")):
-        print("기존 인덱스 로드 중...")
-        vectorstore = FAISS.load_local(DB_DIR, embedding_model, allow_dangerous_deserialization=True)
-    else:
-        print("새 인덱스 생성 중...")
-        # 빈 문서 리스트로 초기화
-        vectorstore = FAISS.from_documents([
-            LCDocument(page_content="초기화 문서", metadata={"source": "초기화", "page": 0})
-        ], embedding_model)
-    
-    # 파일별로 처리 (배치 처리)
-    total_chunks = 0
-    for i, file_name in enumerate(files, 1):
-        print(f"\n처리 중: {file_name} ({i}/{len(files)})")
+
+    # 임베딩 모델 초기화 (배치 사이즈 축소로 메모리 절약)
+    embedding_model = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        encode_kwargs={"batch_size": 32}  # 기본은 32 → 16으로 줄여 메모리 사용 감소
+    )
+
+    all_chunks = []
+    total_pages = 0
+
+    # 문서별로 청크 수 추적 및 로그 출력
+    for file_name in files:
         file_path = os.path.join(DOCS_DIR, file_name)
+        if file_name.endswith(".pdf"):
+            text_by_page = read_pdf(file_path)
+        else:
+            text_by_page = read_docx(file_path)
+
+        total_pages += len(text_by_page)
+
+        chunks = split_text_to_chunks(text_by_page, file_name)
+        all_chunks.extend(chunks)
+        print(f" {file_name} → {len(chunks)}개 청크")
         
-        # 단일 문서 로드
-        text_by_page = load_document(file_path)
-        print(f"  - {len(text_by_page)}페이지 로드됨")
-        
-        # 메모리 관리를 위해 텍스트를 청크로 분할
-        chunks = split_text_to_chunks(text_by_page, file_name, chunk_size=100)
-        print(f"  - {len(chunks)}개 청크로 분할됨")
-        total_chunks += len(chunks)
-        
-        # 메모리 최적화: 텍스트 페이지 데이터 해제
-        del text_by_page
+        # 메모리 최적화
+        del text_by_page, chunks
         gc.collect()
-        
-        # 청크를 작은 배치로 처리
-        batch_size = 50  # 한 번에 처리할 청크 수
-        for batch_start in range(0, len(chunks), batch_size):
-            batch_end = min(batch_start + batch_size, len(chunks))
-            current_batch = chunks[batch_start:batch_end]
-            
-            print(f"  - 배치 처리 중: {batch_start+1}~{batch_end}/{len(chunks)}")
-            
-            # 현재 배치를 LangChain 문서로 변환
-            lc_documents = [
-                LCDocument(
-                    page_content=chunk["text"],
-                    metadata={"source": chunk["source"], "page": chunk["page"]}
-                )
-                for chunk in current_batch
-            ]
-            
-            # 기존 인덱스에 추가
-            vectorstore.add_documents(lc_documents)
-            
-            # 메모리 최적화
-            del lc_documents
-            gc.collect()
-            
-            # 잠시 대기하여 시스템에 여유 부여
-            time.sleep(0.1)
-        
-        # 현재 파일 처리 완료 후 인덱스 저장
-        print("  - 현재까지의 인덱스 저장 중...")
+        time.sleep(0.1)  # 시스템 여유 주기
+
+    print(f"\n📊 전체 문서 수: {len(files)}개")
+    print(f"📄 전체 페이지 수: {total_pages}")
+    print(f"🔖 전체 청크 수: {len(all_chunks)}")
+
+    #if len(all_chunks) > 100_000:
+    #    print("⚠️ 청크 수가 매우 많습니다. 메모리 부족 가능성이 있으므로 배치 처리를 고려하세요.")
+
+    # LangChain 문서 형식으로 변환
+    lc_documents = [
+        LCDocument(page_content=chunk["text"], metadata={"source": chunk["source"], "page": chunk["page"]})
+        for chunk in all_chunks
+    ]
+
+    # 전체 청크로부터 인덱스 생성
+    print("\n🔧 인덱스 생성 중...")
+    vectorstore = FAISS.from_documents(lc_documents, embedding_model)
+
+   
+    # 인덱스 저장
+    try:
         vectorstore.save_local(DB_DIR)
-        
-        # 배치 처리 후 메모리 정리
-        del chunks
-        gc.collect()
-    
-    print(f"\n✅ 모든 문서 처리 완료. 총 {total_chunks}개 청크가 인덱싱됨")
-    print(f"💾 최종 인덱스 저장 완료 → {INDEX_FAISS_PATH}")
-    print(f"💾 메타데이터 저장 완료 → {INDEX_PKL_PATH}")
-    print("🎉 LangChain 호환 벡터 DB 생성 완료")
+    except Exception as e:
+        print(f"인덱스 저장 오류: {e}")
+
+    print(f"\n💾 인덱스 저장 완료: {INDEX_FAISS_PATH}")
+    print(f"💾 메타데이터 저장 완료: {INDEX_PKL_PATH}")
+    print("🎉 모든 문서 인덱싱 완료")
+
 
 # === 검색 예시 ===
 def search_query(query, top_k=5):
@@ -244,7 +231,16 @@ def search_query(query, top_k=5):
     embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     
     # pickle 파일 로딩 허용
+    #vectorstore = FAISS.load_local(DB_DIR, embedding_model, allow_dangerous_deserialization=True)
+    print("📁 벡터스토어 로딩 중...")
     vectorstore = FAISS.load_local(DB_DIR, embedding_model, allow_dangerous_deserialization=True)
+    print("✅ 벡터스토어 로딩 완료")
+
+    # 실제 벡터 개수 확인
+    if hasattr(vectorstore, "index") and hasattr(vectorstore.index, "ntotal"):
+        print(f"🔍 인덱스에 저장된 벡터 수: {vectorstore.index.ntotal}")
+    else:
+        print("⚠️ 인덱스 정보 없음")
 
     results = vectorstore.similarity_search(query, k=top_k)
 
