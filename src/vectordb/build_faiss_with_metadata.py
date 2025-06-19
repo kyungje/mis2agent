@@ -18,17 +18,45 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.path.join(BASE_DIR, "docs")
 DB_DIR = os.path.join(BASE_DIR, "db")
-INDEX_FAISS_PATH = os.path.join(DB_DIR, "index.faiss")
-INDEX_PKL_PATH = os.path.join(DB_DIR, "index.pkl")
+
+# 인덱스 분류별 경로 설정
+GAS_INDEX_DIR = os.path.join(DB_DIR, "gas.index")
+POWER_INDEX_DIR = os.path.join(DB_DIR, "power.index")
+OTHER_INDEX_DIR = os.path.join(DB_DIR, "other.index")
 
 # 필요한 폴더 생성
 os.makedirs(DB_DIR, exist_ok=True)
+os.makedirs(GAS_INDEX_DIR, exist_ok=True)
+os.makedirs(POWER_INDEX_DIR, exist_ok=True)
+os.makedirs(OTHER_INDEX_DIR, exist_ok=True)
 
 # === OpenAI 임베딩 모델 초기화 ===
-embedding_model = OpenAIEmbeddings(
-    model="text-embedding-3-small",  # OpenAI 임베딩 모델
-    chunk_size=1000  # 배치 크기
-)
+def create_embedding_model():
+    """동적으로 배치 크기를 조정하여 임베딩 모델을 생성합니다."""
+    # 초기 배치 크기
+    chunk_size = 1000
+    
+    try:
+        embedding_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            chunk_size=chunk_size,
+            max_retries=3
+        )
+        return embedding_model
+    except Exception as e:
+        if "max_tokens_per_request" in str(e):
+            # 토큰 제한 오류 시 배치 크기 줄임
+            chunk_size = 500
+            print(f"토큰 제한으로 인해 배치 크기를 {chunk_size}로 조정합니다.")
+            return OpenAIEmbeddings(
+                model="text-embedding-3-small",
+                chunk_size=chunk_size,
+                max_retries=3
+            )
+        else:
+            raise e
+
+embedding_model = create_embedding_model()
 
 # === 텍스트 분할기 초기화 ===
 text_splitter = RecursiveCharacterTextSplitter(
@@ -90,6 +118,25 @@ def normalize_text(text):
     
     return text.strip()
 
+# === 파일 분류 함수 ===
+def classify_file(file_name):
+    """파일명에 따라 분류를 결정합니다."""
+    if '도시가스' in file_name:
+        return 'gas'
+    elif '전력' in file_name:
+        return 'power'
+    else:
+        return 'other'
+
+def get_index_dir(category):
+    """분류에 따른 인덱스 디렉토리를 반환합니다."""
+    if category == 'gas':
+        return GAS_INDEX_DIR
+    elif category == 'power':
+        return POWER_INDEX_DIR
+    else:
+        return OTHER_INDEX_DIR
+
 # === 문서 처리 및 청킹 ===
 def process_document(file_path):
     """문서를 읽고 LangChain 텍스트 분할기를 사용하여 청킹합니다."""
@@ -128,7 +175,7 @@ def process_document(file_path):
 
 # === 벡터 인덱스 구축 ===
 def build_langchain_vector_index():
-    """문서들을 읽어서 벡터 인덱스를 구축합니다."""
+    """문서들을 읽어서 분류별로 벡터 인덱스를 구축합니다."""
     print("📂 문서 인덱싱 시작")
 
     # 문서 목록 불러오기
@@ -139,16 +186,31 @@ def build_langchain_vector_index():
 
     print(f"총 {len(files)}개 문서 발견")
 
-    all_documents = []
+    # 분류별로 문서 그룹화
+    gas_documents = []
+    power_documents = []
+    other_documents = []
+    
     total_files = len(files)
 
-    # 문서별로 처리
+    # 문서별로 처리 및 분류
     for i, file_name in enumerate(files, 1):
         file_path = os.path.join(DOCS_DIR, file_name)
         print(f"[{i}/{total_files}] 처리 중: {file_name}")
         
+        # 파일 분류
+        category = classify_file(file_name)
+        print(f"  → 분류: {category}")
+        
         documents = process_document(file_path)
-        all_documents.extend(documents)
+        
+        # 분류별로 문서 추가
+        if category == 'gas':
+            gas_documents.extend(documents)
+        elif category == 'power':
+            power_documents.extend(documents)
+        else:
+            other_documents.extend(documents)
         
         # 메모리 최적화
         del documents
@@ -156,44 +218,119 @@ def build_langchain_vector_index():
         time.sleep(0.1)  # 시스템 여유 주기
 
     print(f"\n📊 전체 문서 수: {len(files)}개")
-    print(f"🔖 전체 청크 수: {len(all_documents)}")
+    print(f"🔖 Gas 문서: {len(gas_documents)}개")
+    print(f"🔖 Power 문서: {len(power_documents)}개")
+    print(f"🔖 Other 문서: {len(other_documents)}개")
 
-    if len(all_documents) == 0:
-        print("경고: 인덱싱할 문서가 없습니다!")
-        return
+    # 분류별로 인덱스 생성
+    categories = [
+        ('gas', gas_documents, 'Gas'),
+        ('power', power_documents, 'Power'),
+        ('other', other_documents, 'Other')
+    ]
+    
+    for category, documents, category_name in categories:
+        if len(documents) == 0:
+            print(f"⚠️ {category_name} 문서가 없어 인덱스를 생성하지 않습니다.")
+            continue
+            
+        print(f"\n🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+        
+        # 배치 단위로 임베딩 처리
+        try:
+            vectorstore = FAISS.from_documents(documents, embedding_model)
+        except Exception as e:
+            if "max_tokens_per_request" in str(e):
+                print(f"토큰 제한으로 인해 배치 크기를 500으로 조정합니다...")
+                # 두 번째 시도: 500
+                try:
+                    medium_embedding_model = OpenAIEmbeddings(
+                        model="text-embedding-3-small",
+                        chunk_size=500,
+                        max_retries=3
+                    )
+                    vectorstore = FAISS.from_documents(documents, medium_embedding_model)
+                except Exception as e2:
+                    if "max_tokens_per_request" in str(e2):
+                        print(f"토큰 제한으로 인해 배치 크기를 100으로 조정합니다...")
+                        # 최후 수단: 100
+                        small_embedding_model = OpenAIEmbeddings(
+                            model="text-embedding-3-small",
+                            chunk_size=100,
+                            max_retries=3
+                        )
+                        vectorstore = FAISS.from_documents(documents, small_embedding_model)
+                    else:
+                        raise e2
+            else:
+                raise e
 
-    print(f"최종 인덱싱 대상 문서 수: {len(all_documents)}")
-    print("예시 문서:", all_documents[0].page_content[:200])
+        # 인덱스 저장
+        index_dir = get_index_dir(category)
+        try:
+            vectorstore.save_local(index_dir)
+            print(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
+        except Exception as e:
+            print(f"❌ {category_name} 인덱스 저장 오류: {e}")
 
-    # 전체 청크로부터 인덱스 생성
-    print("\n🔧 인덱스 생성 중...")
-    vectorstore = FAISS.from_documents(all_documents, embedding_model)
-
-    # 인덱스 저장
-    try:
-        vectorstore.save_local(DB_DIR)
-    except Exception as e:
-        print(f"인덱스 저장 오류: {e}")
-
-    print(f"\n💾 인덱스 저장 완료: {INDEX_FAISS_PATH}")
-    print(f"💾 메타데이터 저장 완료: {INDEX_PKL_PATH}")
-    print("🎉 모든 문서 인덱싱 완료")
+    print("\n🎉 모든 분류별 인덱스 생성 완료")
 
 # === 검색 시스템 ===
-def search_query(query, top_k=10):
+def search_query(query, top_k=10, category=None):
     """벡터 인덱스에서 유사한 문서를 검색합니다."""
     print(f"\n🔍 검색어: {query}")
     
-    vectorstore = FAISS.load_local(DB_DIR, embedding_model, allow_dangerous_deserialization=True)
-    print("✅ 벡터스토어 로딩 완료")
-    print(f"총 벡터 수: {vectorstore.index.ntotal}")
+    # 검색할 인덱스 결정
+    if category is None:
+        # 모든 인덱스에서 검색
+        search_categories = ['gas', 'power', 'other']
+        all_results = []
+        
+        for cat in search_categories:
+            index_dir = get_index_dir(cat)
+            index_faiss_path = os.path.join(index_dir, "index.faiss")
+            
+            if os.path.exists(index_faiss_path):
+                try:
+                    print(f"📂 {cat} 인덱스에서 검색 중...")
+                    vectorstore = FAISS.load_local(index_dir, embedding_model, allow_dangerous_deserialization=True)
+                    results = vectorstore.similarity_search_with_score(query, k=5)
+                    all_results.extend(results)
+                    print(f"  → {cat} 인덱스에서 {len(results)}개 결과 발견")
+                except Exception as e:
+                    print(f"⚠️ {cat} 인덱스 로드 실패: {e}")
+            else:
+                print(f"ℹ️ {cat} 인덱스가 존재하지 않습니다. (건너뜀)")
+        
+        # 모든 결과를 점수로 정렬
+        if all_results:
+            all_results = sorted(all_results, key=lambda x: x[1])
+            results = all_results[:top_k]
+        else:
+            print("❌ 검색 결과가 없습니다.")
+            return
+        
+    else:
+        # 특정 카테고리에서만 검색
+        index_dir = get_index_dir(category)
+        index_faiss_path = os.path.join(index_dir, "index.faiss")
+        
+        if not os.path.exists(index_faiss_path):
+            print(f"❌ {category} 인덱스를 찾을 수 없습니다: {index_faiss_path}")
+            return
+            
+        try:
+            vectorstore = FAISS.load_local(index_dir, embedding_model, allow_dangerous_deserialization=True)
+            results = vectorstore.similarity_search_with_score(query, k=top_k)
+            results = sorted(results, key=lambda x: x[1])  # 낮은 점수일수록 유사도 높음
+        except Exception as e:
+            print(f"❌ {category} 인덱스 로드 실패: {e}")
+            return
 
-    # 검색 결과를 더 많이 가져와서 정렬
-    results = vectorstore.similarity_search_with_score(query, k=20)
-    results = sorted(results, key=lambda x: x[1])  # 낮은 점수일수록 유사도 높음
+    print(f"✅ 검색 완료 (총 {len(results)}개 결과)")
 
     print("\n📌 검색 결과:")
-    for i, (doc, score) in enumerate(results[:top_k], start=1):
+    for i, (doc, score) in enumerate(results, start=1):
         print(f"[{i}] 점수: {score:.4f}")
         # 검색어 주변 컨텍스트를 포함하여 출력
         content = doc.page_content
@@ -214,7 +351,15 @@ if __name__ == "__main__":
     build_langchain_vector_index()
     
     # 인덱스 생성 완료 후 예시 검색 수행
-    #search_query("도시가스 공급 규정에서 도시가스회사의 의무는 무엇인가요?")
-    #search_query("가스요금은 어떻게 계산되나요?")
+    print("\n" + "="*60)
+    print("🔍 검색 테스트")
+    print("="*60)
+    
+    # 전체 검색
     search_query("기준열량")
-    #search_query("최고열량")
+    
+    # 분류별 검색 예시
+    #search_query("도시가스 공급 규정에서 도시가스회사의 의무는 무엇인가요?", category='gas')
+    #search_query("가스요금은 어떻게 계산되나요?", category='gas')
+    #search_query("전력 공급 규정", category='power')
+    #search_query("기타 문서 검색", category='other')
