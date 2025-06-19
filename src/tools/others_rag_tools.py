@@ -176,13 +176,28 @@ class OthersRAGTool(BaseTool):
             return "관련 문서를 찾을 수 없습니다."
         
         formatted_docs = []
-        for doc in docs:
-            formatted_doc = f"<document>\n"
+        for i, doc in enumerate(docs, 1):
+            formatted_doc = f"<document id='{i}'>\n"
             formatted_doc += f"<content>{doc.page_content}</content>\n"
+            
+            # 메타데이터 정보 추가
             if 'source' in doc.metadata:
                 formatted_doc += f"<source>{doc.metadata['source']}</source>\n"
             if 'page' in doc.metadata:
                 formatted_doc += f"<page>{doc.metadata['page']}</page>\n"
+            if 'title' in doc.metadata:
+                formatted_doc += f"<title>{doc.metadata['title']}</title>\n"
+            if 'section' in doc.metadata:
+                formatted_doc += f"<section>{doc.metadata['section']}</section>\n"
+            if 'chapter' in doc.metadata:
+                formatted_doc += f"<chapter>{doc.metadata['chapter']}</chapter>\n"
+            if 'subsection' in doc.metadata:
+                formatted_doc += f"<subsection>{doc.metadata['subsection']}</subsection>\n"
+            if 'paragraph' in doc.metadata:
+                formatted_doc += f"<paragraph>{doc.metadata['paragraph']}</paragraph>\n"
+            if 'line' in doc.metadata:
+                formatted_doc += f"<line>{doc.metadata['line']}</line>\n"
+            
             formatted_doc += "</document>"
             formatted_docs.append(formatted_doc)
         
