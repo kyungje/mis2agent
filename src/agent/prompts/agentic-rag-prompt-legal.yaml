@@ -27,3 +27,5 @@ template: |
 
   대화 기록:
   {chat_history}
+
+  {agent_scratchpad}
