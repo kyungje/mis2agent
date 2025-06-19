@@ -20,9 +20,9 @@ DOCS_DIR = os.path.join(BASE_DIR, "docs")
 DB_DIR = os.path.join(BASE_DIR, "db")
 
 # 인덱스 분류별 경로 설정
-GAS_INDEX_DIR = os.path.join(DB_DIR, "gas.index")
-POWER_INDEX_DIR = os.path.join(DB_DIR, "power.index")
-OTHER_INDEX_DIR = os.path.join(DB_DIR, "other.index")
+GAS_INDEX_DIR = os.path.join(DB_DIR, "gas_index")
+POWER_INDEX_DIR = os.path.join(DB_DIR, "power_index")
+OTHER_INDEX_DIR = os.path.join(DB_DIR, "other_index")
 
 # 필요한 폴더 생성
 os.makedirs(DB_DIR, exist_ok=True)
