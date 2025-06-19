@@ -18,13 +18,26 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set")
 
-# FAISS 인덱스 경로 설정
-index_path = os.getenv("INDEX_PATH")
-if not index_path:
-    logger.warning("INDEX_PATH is not set. Legal agent will use dummy data.")
+# 도메인별 FAISS 인덱스 경로 설정
+gas_index_path = os.getenv("GAS_INDEX_PATH")
+power_index_path = os.getenv("POWER_INDEX_PATH")
+others_index_path = os.getenv("OTHERS_INDEX_PATH")
 
-# Agent 초기화
-agent = Agent(index_path=index_path or "dummy")
+if not gas_index_path:
+    logger.warning("GAS_INDEX_PATH is not set. Gas-related queries will use dummy data.")
+
+if not power_index_path:
+    logger.warning("POWER_INDEX_PATH is not set. Power-related queries will use general agent.")
+
+if not others_index_path:
+    logger.warning("OTHERS_INDEX_PATH is not set. General queries will use basic conversation.")
+
+# Agent 초기화 (도메인별 인덱스 경로 전달)
+agent = Agent(
+    gas_index_path=gas_index_path or "dummy",
+    power_index_path=power_index_path,
+    others_index_path=others_index_path
+)
 
 app = FastAPI(title="Chat API")
 
