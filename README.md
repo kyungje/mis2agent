@@ -4,15 +4,21 @@
 ```
 ai-agent/
 ├── src/
-│   ├── agent/      # AI 에이전트 관련 코드
-│   ├── api/        # FastAPI 백엔드
-│   ├── config/     # 설정 파일
-│   ├── index/      # FAISS 인덱스 파일
-│   └── ui/         # Streamlit UI
-├── tests/          # 테스트 코드
-├── .env           # 환경 변수
-├── pyproject.toml # 프로젝트 설정
-└── README.md      # 프로젝트 문서
+│   ├── agent/              # AI 에이전트 관련 코드
+│   ├── api/                # FastAPI 백엔드
+│   ├── config/             # 설정 파일
+│   ├── tools/              # 에이전트 도구들 (RAG, 검색 등)
+│   ├── ui/                 # Streamlit UI
+│   └── vectordb/           # 벡터 데이터베이스 관련
+│       ├── docs/           # 원본 문서 (PDF, DOCX)
+│       ├── db/             # FAISS 인덱스 저장소
+│           ├── gas_index/  # 도시가스 관련 인덱스
+│           ├── power_index/ # 전력 관련 인덱스
+│           └── other_index/ # 기타 문서 인덱스                   
+├── tests/                  # 테스트 코드
+├── .env                   # 환경 변수
+├── pyproject.toml         # 프로젝트 설정
+└── README.md              # 프로젝트 문서
 ```
 
 ## 설치 방법
