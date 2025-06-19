@@ -29,10 +29,18 @@ poetry install
 
 3. 환경 변수 설정:
 `.env` 파일을 생성하고 다음 내용을 추가합니다:
+
 ```
 OPENAI_API_KEY=your_api_key_here
-INDEX_PATH=src/vectordb/db
+GAS_INDEX_PATH=src/vectordb/db/gas_index
+POWER_INDEX_PATH=src/vectordb/db/power_index
+OTHERS_INDEX_PATH=src/vectordb/db/other_index
 ```
+
+**참고:**
+- `GAS_INDEX_PATH`: 도시가스 관련 벡터 데이터베이스 경로
+- `POWER_INDEX_PATH`: 전력 관련 벡터 데이터베이스 경로
+- `OTHERS_INDEX_PATH`: 기타 문서들에 대한 벡터 데이터베이스 경로 (관련성 검증 후 사용)
 
 ## 추가 모듈 설치
 
@@ -96,6 +104,8 @@ poetry run pytest
 - FastAPI 서버와 Streamlit UI를 동시에 실행하려면 두 개의 터미널이 필요합니다.
 - FastAPI 서버가 실행 중이어야 Streamlit UI가 정상적으로 작동합니다.
 - OpenAI API 키가 올바르게 설정되어 있어야 합니다.
+- 도메인별 인덱스 경로가 설정되지 않은 경우, 해당 도메인의 질문은 일반 Agent로 처리됩니다.
+- `OTHERS_INDEX_PATH`의 경우, 검색 결과가 질문과 관련이 없으면 벡터 DB를 사용하지 않고 일반 대화로 처리됩니다.
 
 
 
