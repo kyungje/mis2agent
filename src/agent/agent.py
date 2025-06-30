@@ -40,20 +40,21 @@ class Agent:
     async def _select_agent_with_ai(self, question: str) -> BaseAgent:
         """AI를 사용하여 질문에 가장 적합한 Agent를 선택합니다."""
         try:
-            # 사용 가능한 Agent 목록 생성
-            available_agents = []
-            if self.legal_agent:
-                available_agents.append("legal_agent")
-            if self.power_agent:
-                available_agents.append("power_agent")
-            available_agents.append("general_agent")
-            
             # AI 기반 Agent 선택을 위한 프롬프트
             prompt = f"""다음 질문에 가장 적합한 AI Agent를 선택해주세요.
 
 사용 가능한 Agent:
-1. legal_agent: 서울특별시 도시가스회사 공급규정, 가스 공급/요금/계약/안전/설비 등 도시가스 관련 질문 처리
-2. power_agent: 전력 공급/요금/계약/안전/설비, 한국전력, 전기사업법 등 전력 관련 질문 처리  
+1. legal_agent: 서울특별시 도시가스회사 공급규정 관련 질문 처리
+   - 가스 공급, 요금, 계약, 안전, 설비 관련 질문
+   - 압력 관련 질문 (최고압력, 공급압력, 압력 초과 등)
+   - 도시가스 공급규정, 가스사용량 산정 관련 질문
+   - 서울특별시 도시가스회사 관련 모든 질문
+
+2. power_agent: 전력 관련 질문 처리
+   - 전력, 전기, 요금, 계약, 안전, 설비 관련 질문
+   - 한국전력, 전기사업법 관련 질문
+   - 전기 사용, 계량, 송전, 배전, 발전 관련 질문
+
 3. general_agent: 일반적인 대화, 위 두 도메인에 해당하지 않는 질문 처리
 
 질문: {question}
@@ -85,9 +86,9 @@ class Agent:
                 
         except Exception as e:
             logger.error(f"Error in AI-based agent selection: {e}")
-            # 오류 발생 시 기본적으로 general_agent 반환
+            # 오류 발생 시 GeneralAgent 반환
             return self.general_agent
-
+    
     async def get_response(self, messages: List[Dict[str, str]]) -> str:
         """
         주어진 메시지 목록을 기반으로 AI 응답을 생성합니다.
