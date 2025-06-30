@@ -164,6 +164,23 @@ def get_index_dir(category):
     else:
         return OTHER_INDEX_DIR
 
+def extract_metadata_from_filename(filename):
+    base_name = os.path.splitext(filename)[0]
+    parts = re.split(r'[_\-\s]', base_name)
+
+    version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
+    region_list = ['서울특별시', '부산광역시', '대구광역시', '광주광역시', '인천광역시', '대전광역시', '울산광역시','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전라북도', '경상남도', '경상북도']
+    region = next((p for p in parts if p in region_list), None)
+    organization_map = {'도시가스': '도시가스', '전력': '전력'}
+    organization = next((p for p in organization_map if p in parts), "기타")
+
+    return {
+        "version": version,
+        "region": region,
+        "organization": organization,
+        "title": base_name
+    }
+
 # === 문서 처리 및 청킹 ===
 def process_document(file_path):
     """문서를 읽고 LangChain 텍스트 분할기를 사용하여 청킹합니다."""
@@ -177,23 +194,37 @@ def process_document(file_path):
     else:
         return []
     
+    # 텍스트가 비어있으면 처리 중단
+    if not text:
+        print(f"⚠️  {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
+        return []
+        
     # 텍스트 정규화
     text = normalize_text(text)
     
     # LangChain 텍스트 분할기 사용
     chunks = text_splitter.split_text(text)
     
+    # 파일명에서 추가 메타데이터 추출
+    additional_metadata = extract_metadata_from_filename(filename)
+    
     # 메타데이터가 포함된 LangChain 문서로 변환
     documents = []
     for i, chunk in enumerate(chunks):
         if len(chunk.strip()) > 50:  # 최소 길이 필터 (50자 이상)
+            # 기본 메타데이터와 추가 메타데이터를 결합
+            metadata = {
+                "source": filename,
+                "chunk_id": i,
+                "file_path": file_path,
+                "version": additional_metadata["version"],
+                "region": additional_metadata["region"],
+                "organization": additional_metadata["organization"],
+                "title": additional_metadata["title"]
+            }
             doc = LCDocument(
                 page_content=chunk,
-                metadata={
-                    "source": filename,
-                    "chunk_id": i,
-                    "file_path": file_path
-                }
+                metadata=metadata
             )
             documents.append(doc)
     
