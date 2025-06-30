@@ -1,5 +1,5 @@
 import os
-import fitz  # PyMuPDF
+import pdfplumber  # PyMuPDF 대신 pdfplumber 사용
 from docx import Document
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -71,51 +71,78 @@ def read_docx(path):
     """DOCX 문서를 읽어서 텍스트를 추출합니다."""
     doc = Document(path)
     text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+    text = latex_to_text(text)  # LaTeX 변환 추가
     print(f"[DOCX] {path} 추출 텍스트 예시:", text[:100])
+    return text
+
+def latex_to_text(text):
+    """
+    LaTeX 수식을 사람이 읽는 텍스트 수식으로 변환
+    예: \frac{a}{b} → (a) / (b)
+    """
+    # \frac 변환 함수
+    def frac_repl(match):
+        return f"({match.group(1)}) / ({match.group(2)})"
+
+    # LaTeX 블록(\[...\], $$...$$, $...$)을 찾아서 변환
+    def latex_block_repl(match):
+        latex_expr = match.group(1)
+        # \frac 변환
+        latex_expr = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, latex_expr)
+        # \times 변환
+        latex_expr = latex_expr.replace(r'\times', '×')
+        # 중괄호 제거
+        latex_expr = latex_expr.replace('{', '').replace('}', '')
+        return latex_expr
+
+    # \[ ... \] 블록 변환
+    text = re.sub(r'\\\[(.*?)\\\]', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+    # $$ ... $$ 블록 변환
+    text = re.sub(r'\$\$(.*?)\$\$', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+    # $ ... $ 블록 변환
+    text = re.sub(r'\$(.*?)\$', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+
+    # 인라인 \frac 변환(혹시 남아있을 경우)
+    text = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, text)
+    text = text.replace(r'\times', '×')
+    text = text.replace('{', '').replace('}', '')
+
     return text
 
 def read_pdf(path):
     """PDF 문서를 읽어서 전체 텍스트를 추출합니다."""
-    doc = fitz.open(path)
     full_text = ""
-    
-    # 페이지별로 처리
-    for page_num, page in enumerate(doc, start=1):
-        try:
-            # 보다 구조화된 텍스트 추출 방식으로 변경
-            blocks = page.get_text("blocks")
-            page_text = ""
-            for block in blocks:
-                if block[6] == 0:  # 텍스트 블록만 선택 (이미지 블록 제외)
-                    # 블록 텍스트에 공백 추가
-                    block_text = block[4]
-                    # 한글 텍스트 정규화
-                    block_text = normalize_text(block_text)
-                    page_text += block_text + "\n"
-                    
-            full_text += page_text + "\n"
-        except Exception as e:
-            print(f"페이지 {page_num} 처리 중 오류: {str(e)}")
-    
-    # 메모리 해제
-    doc.close()
+    with pdfplumber.open(path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                page_text = page.extract_text()
+                if page_text:
+                    page_text = latex_to_text(page_text)
+                    page_text = normalize_text(page_text)
+                    full_text += page_text + "\n"
+            except Exception as e:
+                print(f"페이지 {page_num} 처리 중 오류: {str(e)}")
     if full_text:
         print(f"[PDF] {path} 텍스트 예시:", full_text[:100])
     return full_text
 
 # === 텍스트 정규화 ===
 def normalize_text(text):
-    """텍스트 정규화 (한글-영문 공백, 특수문자 정리)"""
+    """텍스트 정규화 (한글-영문 공백, 수식 기호 보존)"""
     # 한글-영문 공백 정리
     text = re.sub(r'([가-힣])([A-Za-z0-9])', r'\1 \2', text)
     text = re.sub(r'([A-Za-z0-9])([가-힣])', r'\1 \2', text)
-    
-    # 연속된 공백 정리
+
+    # 수식 기호 보존: √ ± ≈ ∞ × ÷ π ² ³ ^ / = % 등
+    math_symbols = "√±≈∞×÷π²³^=/%"
+
+    # 허용 문자 정의: 문자, 숫자, 공백, 일부 수식 기호, 일반 문장부호
+    allowed_chars = r'\w\s\.\,\!\?\;\:\-\(\)\[\]\{\}' + re.escape(math_symbols)
+    text = re.sub(rf'[^\w\s{re.escape(".,!?;:-()[]{}")}{"".join(math_symbols)}]', '', text)
+
+    # 연속 공백 정리
     text = re.sub(r'\s+', ' ', text)
-    
-    # 특수문자 정리 (문장부호, 괄호 등 유지)
-    text = re.sub(r'[^\w\s\.\,\!\?\;\:\-\(\)\[\]\{\}]', '', text)
-    
+
     return text.strip()
 
 # === 파일 분류 함수 ===

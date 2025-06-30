@@ -3,9 +3,44 @@ import requests
 import json
 from typing import List, Dict, Any
 import time
+import re  # re 모듈 추가
 
 # API 엔드포인트 설정
 API_URL = "http://localhost:8000/chat"
+
+def latex_to_text(text):
+    """
+    LaTeX 수식을 사람이 읽는 텍스트 수식으로 변환
+    예: \frac{a}{b} → (a) / (b)
+    """
+    # \frac 변환 함수
+    def frac_repl(match):
+        return f"({match.group(1)}) / ({match.group(2)})"
+
+    # LaTeX 블록(\[...\], $$...$$, $...$)을 찾아서 변환
+    def latex_block_repl(match):
+        latex_expr = match.group(1)
+        # \frac 변환
+        latex_expr = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, latex_expr)
+        # \times 변환
+        latex_expr = latex_expr.replace(r'\times', '×')
+        # 중괄호 제거
+        latex_expr = latex_expr.replace('{', '').replace('}', '')
+        return latex_expr
+
+    # \[ ... \] 블록 변환
+    text = re.sub(r'\\\[(.*?)\\\]', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+    # $$ ... $$ 블록 변환
+    text = re.sub(r'\$\$(.*?)\$\$', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+    # $ ... $ 블록 변환
+    text = re.sub(r'\$(.*?)\$', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
+
+    # 인라인 \frac 변환(혹시 남아있을 경우)
+    text = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, text)
+    text = text.replace(r'\times', '×')
+    text = text.replace('{', '').replace('}', '')
+
+    return text
 
 def initialize_session_state():
     """세션 상태 초기화"""
@@ -70,6 +105,9 @@ def send_message(user_input: str):
         
         # 응답 처리
         assistant_response = response.json()["response"]
+        
+        # === 여기에서 수식 변환 적용 ===
+        assistant_response = latex_to_text(assistant_response)
         
         # 스트리밍 방식으로 응답 표시
         with st.chat_message("assistant"):
