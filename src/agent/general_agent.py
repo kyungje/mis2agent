@@ -185,11 +185,16 @@ class GeneralAgent(BaseAgent):
     
     def can_handle(self, question: str) -> bool:
         """일반 질문인지 확인합니다."""
-        # 법령 관련 키워드가 없는 경우 일반 질문으로 간주
-        legal_keywords = [
-            "법", "법령", "법조문", "조항", "법률", "규정", "법원", "판례",
-            "민법", "형법", "상법", "행정법", "헌법", "소송", "계약", "손해배상",
-            "책임", "권리", "의무", "처벌", "벌칙", "제재", "처분", "행정처분"
+        # GeneralAgent는 LegalAgent나 PowerAgent가 처리할 수 없는 모든 질문을 처리
+        # 따라서 항상 True를 반환하거나, 매우 기본적인 필터링만 적용
+        
+        # 완전히 부적절한 질문만 필터링 (예: 음란, 폭력 등)
+        inappropriate_keywords = [
+            "음란", "폭력", "테러", "마약", "도박", "사기"
         ]
         
-        return not any(keyword in question for keyword in legal_keywords) 
+        if any(keyword in question for keyword in inappropriate_keywords):
+            return False
+            
+        # 그 외의 모든 질문은 GeneralAgent가 처리 가능
+        return True 
