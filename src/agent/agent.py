@@ -37,6 +37,78 @@ class Agent:
         if self.power_agent:
             self.agents.append(self.power_agent)
     
+    async def _detect_ambiguous_question(self, question: str) -> Dict[str, Any]:
+        """질문이 애매한지 판단하고 가능한 에이전트들을 반환합니다."""
+        try:
+            prompt = f"""다음 질문을 분석하고, 어떤 AI Agent가 적합한지 판단해주세요.
+
+사용 가능한 Agent:
+1. legal_agent: 서울특별시 도시가스회사 공급규정 관련 질문
+   - 가스 공급, 요금, 계약, 안전, 설비 관련 질문
+   - 도시가스 압력 관련 질문 (최고압력, 공급압력, 압력 초과 등)
+   - 도시가스 공급규정, 가스사용량 산정 관련 질문
+
+2. power_agent: 전력 관련 질문
+   - 전력, 전기, 요금, 계약, 안전, 설비 관련 질문
+   - 전기 압력, 전압 관련 질문
+   - 한국전력, 전기사업법 관련 질문
+
+3. general_agent: 일반적인 대화, 위 두 도메인에 해당하지 않는 질문
+
+질문: {question}
+
+다음 형식으로 답변해주세요:
+confidence: [높음/중간/낮음] (이 질문이 어떤 도메인인지 확신하는 정도)
+primary_agent: [legal_agent/power_agent/general_agent] (가장 적합한 에이전트)
+possible_agents: [legal_agent, power_agent, general_agent 중에서 가능한 모든 에이전트들을 쉼표로 구분]
+reason: 선택 이유를 간단히 설명
+
+예시:
+confidence: 낮음
+primary_agent: legal_agent
+possible_agents: legal_agent, power_agent
+reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 압력(전압)일 수도 있어서 애매함"""
+
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1
+            )
+            
+            content = response.choices[0].message.content.strip()
+            logger.info(f"Ambiguity detection response: {content}")
+            
+            # 응답 파싱
+            result = {
+                "confidence": "중간",
+                "primary_agent": "general_agent",
+                "possible_agents": ["general_agent"],
+                "reason": "파싱 오류"
+            }
+            
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('confidence:'):
+                    result["confidence"] = line.split(':', 1)[1].strip()
+                elif line.startswith('primary_agent:'):
+                    result["primary_agent"] = line.split(':', 1)[1].strip()
+                elif line.startswith('possible_agents:'):
+                    agents_str = line.split(':', 1)[1].strip()
+                    result["possible_agents"] = [agent.strip() for agent in agents_str.split(',')]
+                elif line.startswith('reason:'):
+                    result["reason"] = line.split(':', 1)[1].strip()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in ambiguity detection: {e}")
+            return {
+                "confidence": "중간",
+                "primary_agent": "general_agent", 
+                "possible_agents": ["general_agent"],
+                "reason": f"오류 발생: {str(e)}"
+            }
+
     async def _select_agent_with_ai(self, question: str) -> BaseAgent:
         """AI를 사용하여 질문에 가장 적합한 Agent를 선택합니다."""
         try:
@@ -88,11 +160,21 @@ class Agent:
             logger.error(f"Error in AI-based agent selection: {e}")
             # 오류 발생 시 GeneralAgent 반환
             return self.general_agent
-    
+
+    def _get_agent_by_name(self, agent_name: str) -> BaseAgent:
+        """에이전트 이름으로 해당 에이전트 객체를 반환합니다."""
+        agent_name = agent_name.lower().strip()
+        if agent_name == "legal_agent":
+            return self.legal_agent
+        elif agent_name == "power_agent" and self.power_agent:
+            return self.power_agent
+        else:
+            return self.general_agent
+
     async def get_response(self, messages: List[Dict[str, str]]) -> str:
         """
         주어진 메시지 목록을 기반으로 AI 응답을 생성합니다.
-        AI가 질문을 분석하여 적절한 Agent를 선택합니다.
+        AI가 질문을 분석하여 적절한 Agent를 선택하고, 애매한 경우 사용자에게 구체적인 정보를 요청합니다.
         
         Args:
             messages: 대화 메시지 목록 (role과 content를 포함하는 딕셔너리 리스트)
@@ -116,25 +198,40 @@ class Agent:
                 # 대화 기록을 원본 형식 그대로 유지
                 chat_history = messages[:-1]  # 마지막 메시지 제외
                 
-                # AI 기반으로 적절한 Agent 선택
-                selected_agent = await self._select_agent_with_ai(last_user_message)
-                logger.info(f"Selected Agent: {type(selected_agent).__name__}")
+                # 질문의 애매함 판단
+                ambiguity_result = await self._detect_ambiguous_question(last_user_message)
                 
-                # 선택된 Agent가 LegalAgent인 경우
-                if isinstance(selected_agent, LegalAgent):
-                    response = selected_agent.run(last_user_message, chat_history)
+                # 확신도가 낮고 여러 에이전트가 가능한 경우 사용자에게 구체적 정보 요청
+                if (ambiguity_result["confidence"] == "낮음" and 
+                    len(ambiguity_result["possible_agents"]) > 1):
+                    
+                    logger.info(f"Ambiguous question detected: {ambiguity_result['reason']}")
+                    
+                    # 가능한 영역들을 설명하며 구체적인 정보 요청
+                    possible_agents = ambiguity_result["possible_agents"]
+                    clarification_response = self._generate_clarification_response(
+                        last_user_message, possible_agents, ambiguity_result["reason"]
+                    )
+                    
+                    return clarification_response
+                
+                # 확신도가 높거나 애매하지 않은 경우 선택된 에이전트로 처리
+                chosen_agent = self._get_agent_by_name(ambiguity_result["primary_agent"])
+                logger.info(f"Selected Agent: {type(chosen_agent).__name__} (confidence: {ambiguity_result['confidence']})")
+                
+                # 선택된 Agent로 응답 생성
+                if isinstance(chosen_agent, LegalAgent):
+                    response = chosen_agent.run(last_user_message, chat_history)
                     logger.info(f"Legal Agent Response: {response}")
                     return response
                 
-                # 선택된 Agent가 PowerAgent인 경우
-                if isinstance(selected_agent, PowerAgent):
-                    response = selected_agent.run(last_user_message, chat_history)
+                if isinstance(chosen_agent, PowerAgent):
+                    response = chosen_agent.run(last_user_message, chat_history)
                     logger.info(f"Power Agent Response: {response}")
                     return response
                 
-                # 선택된 Agent가 GeneralAgent인 경우
-                if isinstance(selected_agent, GeneralAgent):
-                    response = selected_agent.run(last_user_message, chat_history)
+                if isinstance(chosen_agent, GeneralAgent):
+                    response = chosen_agent.run(last_user_message, chat_history)
                     logger.info(f"General Agent Response: {response}")
                     return response
             
@@ -154,4 +251,37 @@ class Agent:
             
         except Exception as e:
             logger.error(f"Agent error: {str(e)}")
-            raise 
+            raise
+
+    def _generate_clarification_response(self, question: str, possible_agents: List[str], reason: str) -> str:
+        """애매한 질문에 대해 구체적인 정보를 요청하는 응답을 생성합니다."""
+        
+        # 에이전트별 설명 매핑
+        agent_descriptions = {
+            'legal_agent': '🏛️ **도시가스 관련**: 서울특별시 도시가스회사의 공급규정, 가스 요금, 가스 압력 기준, 가스 안전 관련',
+            'power_agent': '⚡ **전력 관련**: 한국전력의 전기 요금, 전압 기준, 전력 설비, 전기사업법 관련',
+            'general_agent': '💬 **일반 질문**: 위 두 영역에 해당하지 않는 일반적인 질문'
+        }
+        
+        clarification_text = f"""🤔 **질문이 다소 애매합니다!**
+
+**질문**: "{question}"
+
+**분석 결과**: {reason}
+
+다음 중 어떤 영역에 대한 질문인지 좀 더 구체적으로 말씀해주시겠어요?
+
+"""
+        
+        # 가능한 에이전트들에 대한 설명 추가
+        for agent in possible_agents:
+            if agent in agent_descriptions:
+                clarification_text += f"{agent_descriptions[agent]}\n\n"
+        
+        clarification_text += """**💡 예시**:
+- "도시가스 압력 기준은?" → 도시가스 관련
+- "전기 압력(전압) 기준은?" → 전력 관련
+
+좀 더 구체적으로 질문해주시면 정확한 답변을 드릴 수 있습니다! 😊"""
+        
+        return clarification_text 
