@@ -421,3 +421,4 @@ if __name__ == "__main__":
     #search_query("가스요금은 어떻게 계산되나요?", category='gas')
     #search_query("전력 공급 규정", category='power')
     #search_query("기타 문서 검색", category='other')
+    
