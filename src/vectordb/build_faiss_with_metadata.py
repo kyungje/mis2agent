@@ -169,7 +169,7 @@ def extract_metadata_from_filename(filename):
     parts = re.split(r'[_\-\s]', base_name)
 
     version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
-    region_list = ['서울특별시', '부산광역시', '대구광역시', '광주광역시', '인천광역시', '대전광역시', '울산광역시','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전라북도', '경상남도', '경상북도']
+    region_list = ['서울', '부산', '대구', '광주', '인천', '대전', '울산','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전북특별자치도', '경상남도', '경상북도']
     region = next((p for p in parts if p in region_list), None)
     organization_map = {'도시가스': '도시가스', '전력': '전력'}
     organization = next((p for p in organization_map if p in parts), "기타")
