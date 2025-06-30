@@ -79,6 +79,9 @@ class LegalRAGTool(BaseTool):
             elif search_strategy == "keyword":
                 # 키워드 기반 검색
                 docs = self._search_with_keyword_strategy(query)
+            elif search_strategy == "comparison":
+                # 출처별 비교를 위한 검색
+                docs = self._search_with_comparison_strategy(query)
             else:
                 # 기본 검색
                 docs = self._retriever.get_relevant_documents(query)
@@ -134,6 +137,51 @@ class LegalRAGTool(BaseTool):
         unique_docs = self._remove_duplicates(all_docs)
         return unique_docs[:5]  # 상위 5개 결과만 반환
     
+    def _search_with_comparison_strategy(self, query: str) -> List[Document]:
+        """출처별 비교를 위한 검색 전략: 여러 출처에서 관련 문서를 찾아 비교 가능하도록 함"""
+        logger.info("Using comparison search strategy")
+        
+        # 더 많은 결과를 가져와서 출처별로 그룹화
+        comparison_retriever = self._vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 15}  # 더 많은 결과
+        )
+        
+        docs = comparison_retriever.get_relevant_documents(query)
+        
+        # 출처별로 그룹화
+        source_groups = self._group_by_source(docs)
+        
+        # 각 출처에서 대표 문서 선택
+        representative_docs = self._select_representative_docs(source_groups)
+        
+        return representative_docs
+    
+    def _group_by_source(self, docs: List[Document]) -> Dict[str, List[Document]]:
+        """문서들을 출처별로 그룹화합니다."""
+        source_groups = {}
+        
+        for doc in docs:
+            source = doc.metadata.get('source', 'unknown')
+            if source not in source_groups:
+                source_groups[source] = []
+            source_groups[source].append(doc)
+        
+        return source_groups
+    
+    def _select_representative_docs(self, source_groups: Dict[str, List[Document]]) -> List[Document]:
+        """각 출처에서 대표 문서를 선택합니다."""
+        representative_docs = []
+        
+        for source, docs in source_groups.items():
+            if docs:
+                # 각 출처에서 가장 관련성 높은 문서 선택
+                best_doc = docs[0]  # 이미 유사도 순으로 정렬되어 있음
+                representative_docs.append(best_doc)
+        
+        # 최대 5개 출처까지만 반환
+        return representative_docs[:5]
+    
     def _extract_keywords(self, query: str) -> List[str]:
         """질문에서 핵심 키워드를 추출합니다."""
         # 도시가스 관련 주요 키워드들
@@ -180,13 +228,21 @@ class LegalRAGTool(BaseTool):
             return "관련 문서를 찾을 수 없습니다."
         
         formatted_docs = []
-        for doc in docs:
-            formatted_doc = f"<document>\n"
+        for i, doc in enumerate(docs, 1):
+            formatted_doc = f"<document id='{i}'>\n"
             formatted_doc += f"<content>{doc.page_content}</content>\n"
             if 'source' in doc.metadata:
                 formatted_doc += f"<source>{doc.metadata['source']}</source>\n"
             if 'page' in doc.metadata:
                 formatted_doc += f"<page>{doc.metadata['page']}</page>\n"
+            if 'chunk_id' in doc.metadata:
+                formatted_doc += f"<chunk_id>{doc.metadata['chunk_id']}</chunk_id>\n"
+            if 'title' in doc.metadata:
+                formatted_doc += f"<title>{doc.metadata['title']}</title>\n"
+            if 'date' in doc.metadata:
+                formatted_doc += f"<date>{doc.metadata['date']}</date>\n"
+            if 'region' in doc.metadata:
+                formatted_doc += f"<region>{doc.metadata['region']}</region>\n"
             formatted_doc += "</document>"
             formatted_docs.append(formatted_doc)
         
