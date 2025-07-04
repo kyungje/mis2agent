@@ -20,6 +20,13 @@ def latex_to_text(text):
     # LaTeX 블록(\[...\], $$...$$, $...$)을 찾아서 변환
     def latex_block_repl(match):
         latex_expr = match.group(1)
+        # \left와 \right 제거 (괄호 크기 조정 명령어) - 더 포괄적으로 처리
+        latex_expr = re.sub(r'\\left\s*\(', '(', latex_expr)
+        latex_expr = re.sub(r'\\right\s*\)', ')', latex_expr)
+        latex_expr = re.sub(r'\\left\s*\[', '[', latex_expr)
+        latex_expr = re.sub(r'\\right\s*\]', ']', latex_expr)
+        latex_expr = re.sub(r'\\left\s*\\{', '{', latex_expr)
+        latex_expr = re.sub(r'\\right\s*\\}', '}', latex_expr)
         # \frac 변환
         latex_expr = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, latex_expr)
         # \times 변환
@@ -35,7 +42,15 @@ def latex_to_text(text):
     # $ ... $ 블록 변환
     text = re.sub(r'\$(.*?)\$', lambda m: latex_block_repl(m), text, flags=re.DOTALL)
 
-    # 인라인 \frac 변환(혹시 남아있을 경우)
+    # 인라인 변환 (혹시 남아있을 경우)
+    # \left와 \right 제거 - 더 포괄적으로 처리
+    text = re.sub(r'\\left\s*\(', '(', text)
+    text = re.sub(r'\\right\s*\)', ')', text)
+    text = re.sub(r'\\left\s*\[', '[', text)
+    text = re.sub(r'\\right\s*\]', ']', text)
+    text = re.sub(r'\\left\s*\\{', '{', text)
+    text = re.sub(r'\\right\s*\\}', '}', text)
+    # \frac 변환
     text = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', frac_repl, text)
     text = text.replace(r'\times', '×')
     text = text.replace('{', '').replace('}', '')
