@@ -3,7 +3,24 @@ import requests
 import json
 from typing import List, Dict, Any
 import time
-import re  # re 모듈 추가
+import re
+import os
+import tempfile
+import shutil
+from pathlib import Path
+
+# build_faiss_with_metadata.py에서 필요한 모듈들 import
+import pdfplumber
+from docx import Document
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document as LCDocument
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import gc
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 # API 엔드포인트 설정
 API_URL = "http://localhost:8000/chat"
@@ -56,6 +73,307 @@ def latex_to_text(text):
     text = text.replace('{', '').replace('}', '')
 
     return text
+
+# === build_faiss_with_metadata.py에서 가져온 함수들 ===
+
+# 경로 설정
+BASE_DIR = Path(__file__).parent.parent / "vectordb"
+DOCS_DIR = BASE_DIR / "docs"
+DB_DIR = BASE_DIR / "db"
+
+# 인덱스 분류별 경로 설정
+GAS_INDEX_DIR = DB_DIR / "gas_index"
+POWER_INDEX_DIR = DB_DIR / "power_index"
+OTHER_INDEX_DIR = DB_DIR / "other_index"
+
+# 필요한 폴더 생성
+DB_DIR.mkdir(exist_ok=True)
+GAS_INDEX_DIR.mkdir(exist_ok=True)
+POWER_INDEX_DIR.mkdir(exist_ok=True)
+OTHER_INDEX_DIR.mkdir(exist_ok=True)
+
+# OpenAI 임베딩 모델 초기화
+def create_embedding_model():
+    """동적으로 배치 크기를 조정하여 임베딩 모델을 생성합니다."""
+    chunk_size = 1000
+    
+    try:
+        embedding_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            chunk_size=chunk_size,
+            max_retries=3
+        )
+        return embedding_model
+    except Exception as e:
+        if "max_tokens_per_request" in str(e):
+            chunk_size = 500
+            st.info(f"토큰 제한으로 인해 배치 크기를 {chunk_size}로 조정합니다.")
+            return OpenAIEmbeddings(
+                model="text-embedding-3-small",
+                chunk_size=chunk_size,
+                max_retries=3
+            )
+        else:
+            raise e
+
+# 텍스트 분할기 초기화
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=400,
+    chunk_overlap=80,
+    length_function=len,
+    separators=["\n\n", "\n", " ", ""]
+)
+
+# 문서 읽기 함수들
+def read_docx(path):
+    """DOCX 문서를 읽어서 텍스트를 추출합니다."""
+    doc = Document(path)
+    text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+    text = latex_to_text(text)
+    return text
+
+def read_pdf(path):
+    """PDF 문서를 읽어서 전체 텍스트를 추출합니다."""
+    full_text = ""
+    with pdfplumber.open(path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                page_text = page.extract_text()
+                if page_text:
+                    page_text = latex_to_text(page_text)
+                    page_text = normalize_text(page_text)
+                    full_text += page_text + "\n"
+            except Exception as e:
+                st.warning(f"페이지 {page_num} 처리 중 오류: {str(e)}")
+    return full_text
+
+def read_txt(path):
+    """TXT 파일을 읽어서 텍스트를 추출합니다."""
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    text = latex_to_text(text)
+    return text
+
+# 텍스트 정규화
+def normalize_text(text):
+    """텍스트 정규화 (한글-영문 공백, 수식 기호 보존)"""
+    # 한글-영문 공백 정리
+    text = re.sub(r'([가-힣])([A-Za-z0-9])', r'\1 \2', text)
+    text = re.sub(r'([A-Za-z0-9])([가-힣])', r'\1 \2', text)
+
+    # 수식 기호 보존: √ ± ≈ ∞ × ÷ π ² ³ ^ / = % 등
+    math_symbols = "√±≈∞×÷π²³^=/%"
+
+    # 허용 문자 정의: 문자, 숫자, 공백, 일부 수식 기호, 일반 문장부호
+    allowed_chars = r'\w\s\.\,\!\?\;\:\-\(\)\[\]\{\}' + re.escape(math_symbols)
+    text = re.sub(rf'[^\w\s{re.escape(".,!?;:-()[]{}")}{"".join(math_symbols)}]', '', text)
+
+    # 연속 공백 정리
+    text = re.sub(r'\s+', ' ', text)
+
+    return text.strip()
+
+# 파일 분류 함수
+def classify_file(file_name):
+    """파일명에 따라 분류를 결정합니다."""
+    if '도시가스' in file_name:
+        return 'gas'
+    elif '전력' in file_name:
+        return 'power'
+    else:
+        return 'other'
+
+def get_index_dir(category):
+    """분류에 따른 인덱스 디렉토리를 반환합니다."""
+    if category == 'gas':
+        return GAS_INDEX_DIR
+    elif category == 'power':
+        return POWER_INDEX_DIR
+    else:
+        return OTHER_INDEX_DIR
+
+def extract_metadata_from_filename(filename):
+    base_name = os.path.splitext(filename)[0]
+    parts = re.split(r'[_\-\s]', base_name)
+
+    version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
+    region_list = ['서울', '부산', '대구', '광주', '인천', '대전', '울산','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전북특별자치도', '경상남도', '경상북도']
+    region = next((p for p in parts if p in region_list), None)
+    organization_map = {'도시가스': '도시가스', '전력': '전력'}
+    organization = next((p for p in organization_map if p in parts), "기타")
+
+    return {
+        "version": version,
+        "region": region,
+        "organization": organization,
+        "title": base_name
+    }
+
+# 문서 처리 및 청킹
+def process_document(file_path):
+    """문서를 읽고 LangChain 텍스트 분할기를 사용하여 청킹합니다."""
+    filename = os.path.basename(file_path)
+    
+    # 문서 읽기
+    if file_path.endswith(".pdf"):
+        text = read_pdf(file_path)
+    elif file_path.endswith(".docx"):
+        text = read_docx(file_path)
+    elif file_path.endswith(".txt"):
+        text = read_txt(file_path)
+    else:
+        return []
+    
+    # 텍스트가 비어있으면 처리 중단
+    if not text:
+        st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
+        return []
+        
+    # 텍스트 정규화
+    text = normalize_text(text)
+    
+    # LangChain 텍스트 분할기 사용
+    chunks = text_splitter.split_text(text)
+    
+    # 파일명에서 추가 메타데이터 추출
+    additional_metadata = extract_metadata_from_filename(filename)
+    
+    # 메타데이터가 포함된 LangChain 문서로 변환
+    documents = []
+    for i, chunk in enumerate(chunks):
+        if len(chunk.strip()) > 50:  # 최소 길이 필터 (50자 이상)
+            # 기본 메타데이터와 추가 메타데이터를 결합
+            metadata = {
+                "source": filename,
+                "chunk_id": i,
+                "file_path": file_path,
+                "version": additional_metadata["version"],
+                "region": additional_metadata["region"],
+                "organization": additional_metadata["organization"],
+                "title": additional_metadata["title"]
+            }
+            doc = LCDocument(
+                page_content=chunk,
+                metadata=metadata
+            )
+            documents.append(doc)
+    
+    st.info(f"[CHUNKS] {filename} → {len(documents)}개 생성")
+    return documents
+
+# 벡터 인덱스 구축
+def build_vector_index_from_uploaded_files(uploaded_files):
+    """업로드된 파일들로부터 벡터 인덱스를 구축합니다."""
+    if not uploaded_files:
+        st.warning("업로드된 파일이 없습니다.")
+        return False
+    
+    st.info("📂 문서 인덱싱 시작")
+    
+    # 임베딩 모델 초기화
+    embedding_model = create_embedding_model()
+    
+    # 분류별로 문서 그룹화
+    gas_documents = []
+    power_documents = []
+    other_documents = []
+    
+    total_files = len(uploaded_files)
+    
+    # 파일별로 처리 및 분류
+    for i, uploaded_file in enumerate(uploaded_files, 1):
+        st.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
+        
+        # 임시 파일로 저장
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # 파일 분류
+            category = classify_file(uploaded_file.name)
+            st.info(f"  → 분류: {category}")
+            
+            documents = process_document(tmp_file_path)
+            
+            # 분류별로 문서 추가
+            if category == 'gas':
+                gas_documents.extend(documents)
+            elif category == 'power':
+                power_documents.extend(documents)
+            else:
+                other_documents.extend(documents)
+            
+            # 메모리 최적화
+            del documents
+            gc.collect()
+            
+        finally:
+            # 임시 파일 삭제
+            os.unlink(tmp_file_path)
+    
+    st.info(f"\n📊 전체 문서 수: {len(uploaded_files)}개")
+    st.info(f"🔖 Gas 문서: {len(gas_documents)}개")
+    st.info(f"🔖 Power 문서: {len(power_documents)}개")
+    st.info(f"🔖 Other 문서: {len(other_documents)}개")
+    
+    # 분류별로 인덱스 생성
+    categories = [
+        ('gas', gas_documents, 'Gas'),
+        ('power', power_documents, 'Power'),
+        ('other', other_documents, 'Other')
+    ]
+    
+    success_count = 0
+    for category, documents, category_name in categories:
+        if len(documents) == 0:
+            st.warning(f"⚠️ {category_name} 문서가 없어 인덱스를 생성하지 않습니다.")
+            continue
+            
+        st.info(f"\n🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+        
+        # 배치 단위로 임베딩 처리
+        try:
+            vectorstore = FAISS.from_documents(documents, embedding_model)
+        except Exception as e:
+            if "max_tokens_per_request" in str(e):
+                st.info(f"토큰 제한으로 인해 배치 크기를 500으로 조정합니다...")
+                try:
+                    medium_embedding_model = OpenAIEmbeddings(
+                        model="text-embedding-3-small",
+                        chunk_size=500,
+                        max_retries=3
+                    )
+                    vectorstore = FAISS.from_documents(documents, medium_embedding_model)
+                except Exception as e2:
+                    if "max_tokens_per_request" in str(e2):
+                        st.info(f"토큰 제한으로 인해 배치 크기를 100으로 조정합니다...")
+                        small_embedding_model = OpenAIEmbeddings(
+                            model="text-embedding-3-small",
+                            chunk_size=100,
+                            max_retries=3
+                        )
+                        vectorstore = FAISS.from_documents(documents, small_embedding_model)
+                    else:
+                        raise e2
+            else:
+                raise e
+
+        # 인덱스 저장
+        index_dir = get_index_dir(category)
+        try:
+            vectorstore.save_local(str(index_dir))
+            st.success(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
+            success_count += 1
+        except Exception as e:
+            st.error(f"❌ {category_name} 인덱스 저장 오류: {e}")
+    
+    if success_count > 0:
+        st.success(f"\n🎉 {success_count}개 분류별 인덱스 생성 완료")
+        return True
+    else:
+        st.error("❌ 인덱스 생성에 실패했습니다.")
+        return False
 
 def initialize_session_state():
     """세션 상태 초기화"""
@@ -134,37 +452,87 @@ def send_message(user_input: str):
         st.error(f"Error: {str(e)}")
 
 def main():
-    """메인 함수"""
-    st.set_page_config(
-        page_title="Chat",
-        page_icon="🤖",
-        layout="wide"
-    )
-    
-    st.title("Chat")
-    
-    # 세션 상태 초기화
-    initialize_session_state()
-    
-    # 사이드바
-    with st.sidebar:
-        st.header("About")
-        st.markdown("""
-        This is a chat interface built with Streamlit.
-        It uses OpenAI's GPT model through a FastAPI backend.
-        """)
-        
-        if st.button("Clear Chat"):
-            st.session_state.messages = []
+    st.set_page_config(page_title="AI Agent Chat", page_icon="🤖", layout="wide")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "streaming" not in st.session_state:
+        st.session_state.streaming = False
+
+    tab1, tab2 = st.tabs(["💬 채팅", "📁 문서 업로드"])
+
+    # 채팅 탭
+    with tab1:
+        with st.sidebar:
+            st.header("About")
+            st.markdown("""
+            This is a chat interface built with Streamlit.
+            It uses OpenAI's GPT model through a FastAPI backend.
+            """)
+            if st.button("Clear Chat"):
+                st.session_state.messages = []
+                st.rerun()
+
+        # 항상 채팅 입력창이 하단에 고정
+        display_chat_history()
+        user_input = st.chat_input("메시지를 입력하세요", key="chat_input", disabled=False)
+        if user_input:
+            send_message(user_input)
             st.rerun()
-    
-    # 채팅 인터페이스
-    display_chat_history()
-    
-    # 메시지 입력
-    if prompt := st.chat_input("What's on your mind?"):
-        send_message(prompt)
-        st.rerun()
+
+    # 문서 업로드 탭 (복원)
+    with tab2:
+        st.header("📁 문서 업로드 및 인덱스 생성")
+        st.markdown("""
+        ### 지원 파일 형식
+        - **PDF** (.pdf)
+        - **Word 문서** (.docx) 
+        - **텍스트 파일** (.txt)
+
+        ### 파일 분류 규칙
+        - 파일명에 **'도시가스'** 포함 → Gas 분류
+        - 파일명에 **'전력'** 포함 → Power 분류  
+        - 기타 → Other 분류
+        """)
+        uploaded_files = st.file_uploader(
+            "문서 파일을 선택하세요",
+            type=['pdf', 'docx', 'txt'],
+            accept_multiple_files=True,
+            help="여러 파일을 동시에 업로드할 수 있습니다."
+        )
+        if uploaded_files:
+            st.info(f"📁 {len(uploaded_files)}개 파일이 선택되었습니다:")
+            for file in uploaded_files:
+                category = classify_file(file.name)
+                st.write(f"- {file.name} ({category} 분류)")
+        if st.button("🚀 인덱스 생성 시작", type="primary", disabled=not uploaded_files):
+            try:
+                with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
+                    success = build_vector_index_from_uploaded_files(uploaded_files)
+                    if success:
+                        st.balloons()
+                        st.success("✅ 인덱스 생성이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
+                    else:
+                        st.error("❌ 인덱스 생성에 실패했습니다. 다시 시도해주세요.")
+            except Exception as e:
+                st.error(f"❌ 인덱스 생성 중 오류가 발생했습니다: {str(e)}")
+                st.error("API 서버가 실행되지 않았을 수 있습니다. FastAPI 서버를 먼저 실행해주세요.")
+        st.header("📊 기존 인덱스 정보")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if GAS_INDEX_DIR.exists() and any(GAS_INDEX_DIR.iterdir()):
+                st.success("✅ Gas 인덱스 존재")
+            else:
+                st.warning("⚠️ Gas 인덱스 없음")
+        with col2:
+            if POWER_INDEX_DIR.exists() and any(POWER_INDEX_DIR.iterdir()):
+                st.success("✅ Power 인덱스 존재")
+            else:
+                st.warning("⚠️ Power 인덱스 없음")
+        with col3:
+            if OTHER_INDEX_DIR.exists() and any(OTHER_INDEX_DIR.iterdir()):
+                st.success("✅ Other 인덱스 존재")
+            else:
+                st.warning("⚠️ Other 인덱스 없음")
 
 if __name__ == "__main__":
     main() 
