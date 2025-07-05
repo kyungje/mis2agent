@@ -8,6 +8,7 @@ import os
 import tempfile
 import shutil
 from pathlib import Path
+import unicodedata
 
 # build_faiss_with_metadata.py에서 필요한 모듈들 import
 import pdfplumber
@@ -196,6 +197,10 @@ def normalize_filename(file_name):
     # 대괄호는 제거하되, 키워드가 포함된 부분은 보존
     normalized = re.sub(r'[\[\]\(\)\+\-\_]', ' ', name_without_ext)
     # st.info(f"    특수문자 변환: '{normalized}'")
+    
+    # 한글이 분해되지 않도록 NFC로 정규화
+    normalized = unicodedata.normalize('NFC', normalized)
+    # st.info(f"    한글 정규화: '{normalized}'")
     
     # 키워드가 포함된 부분이 공백으로 분리되었는지 확인하고 복구
     if ' 전력 ' in normalized or normalized.startswith('전력 ') or normalized.endswith(' 전력'):
@@ -440,6 +445,12 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         
         # 실제 파일을 docs 디렉토리에 저장
         file_path = docs_dir / uploaded_file.name
+        
+        # 이미 동일한 파일명이 존재하는지 확인
+        if file_path.exists():
+            st.warning(f"⚠️ '{uploaded_file.name}' 파일이 이미 존재합니다. 인덱스 생성을 건너뜁니다.")
+            return False
+        
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getvalue())
         
@@ -650,8 +661,30 @@ def main():
                 st.session_state.messages = []
                 st.rerun()
 
-        # 항상 채팅 입력창이 하단에 고정
+        # 채팅 히스토리 표시
         display_chat_history()
+        
+        # 하단에 고정된 입력창 (stChatMessage와 완전히 동일한 넓이, 메시지 없으면 tabpanel 기준)
+        st.markdown("""
+<style>
+.stChatInput {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 270px !important;
+    width: 1200px !important;
+    background: white !important;
+    padding: 1rem 0.5rem !important;
+    border-top: 1px solid #e0e0e0 !important;
+    z-index: 1000 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+}
+.main .block-container {
+    padding-bottom: 120px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+        
         user_input = st.chat_input("메시지를 입력하세요", key="chat_input", disabled=False)
         if user_input:
             send_message(user_input)
