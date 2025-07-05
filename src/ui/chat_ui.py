@@ -185,38 +185,137 @@ def normalize_text(text):
 # 파일명 정규화 함수
 def normalize_filename(file_name):
     """파일명을 정규화하여 분류에 사용합니다."""
+    # st.info(f"  🔧 파일명 정규화 과정:")
+    # st.info(f"    원본: '{file_name}'")
+    
     # 파일 확장자 제거
     name_without_ext = os.path.splitext(file_name)[0]
+    # st.info(f"    확장자 제거: '{name_without_ext}'")
     
     # 특수문자 제거 (하이픈, 언더스코어, 플러스 등은 공백으로 변환)
+    # 대괄호는 제거하되, 키워드가 포함된 부분은 보존
     normalized = re.sub(r'[\[\]\(\)\+\-\_]', ' ', name_without_ext)
+    # st.info(f"    특수문자 변환: '{normalized}'")
+    
+    # 키워드가 포함된 부분이 공백으로 분리되었는지 확인하고 복구
+    if ' 전력 ' in normalized or normalized.startswith('전력 ') or normalized.endswith(' 전력'):
+        # 전력 키워드 주변의 공백을 제거하여 복구
+        normalized = re.sub(r'\s+전력\s+', '전력', normalized)
+        normalized = re.sub(r'^전력\s+', '전력', normalized)
+        normalized = re.sub(r'\s+전력$', '전력', normalized)
+        # st.info(f"    전력 키워드 복구: '{normalized}'")
+    
+    if ' 도시가스 ' in normalized or normalized.startswith('도시가스 ') or normalized.endswith(' 도시가스'):
+        # 도시가스 키워드 주변의 공백을 제거하여 복구
+        normalized = re.sub(r'\s+도시가스\s+', '도시가스', normalized)
+        normalized = re.sub(r'^도시가스\s+', '도시가스', normalized)
+        normalized = re.sub(r'\s+도시가스$', '도시가스', normalized)
+        # st.info(f"    도시가스 키워드 복구: '{normalized}'")
     
     # 연속 공백을 단일 공백으로 변환
     normalized = re.sub(r'\s+', ' ', normalized)
+    # st.info(f"    공백 정리: '{normalized}'")
     
     # 앞뒤 공백 제거
     normalized = normalized.strip()
+    # st.info(f"    최종 정규화: '{normalized}'")
     
     return normalized
 
 # 파일 분류 함수
 def classify_file(file_name):
     """파일명에 따라 분류를 결정합니다."""
-    st.info(f"🔍 파일 분류 중: '{file_name}'")
+    # st.info(f"🔍 파일 분류 중: '{file_name}'")
     
     # 파일명 정규화
     normalized_name = normalize_filename(file_name)
-    st.info(f"  📝 정규화된 파일명: '{normalized_name}'")
+    # st.info(f"  📝 정규화된 파일명: '{normalized_name}'")
     
-    if '도시가스' in normalized_name:
-        st.info(f"  ✅ '도시가스' 키워드 발견 → Gas 분류")
+    # 키워드 검색
+    # st.info(f"  🔍 키워드 검색:")
+    
+    # 문자열 길이와 각 문자 확인
+    # st.info(f"    정규화된 파일명 길이: {len(normalized_name)}")
+    # st.info(f"    정규화된 파일명 (repr): {repr(normalized_name)}")
+    
+    # 키워드 검색 결과 (여러 방법으로 검색)
+    gas_found = '도시가스' in normalized_name
+    power_found = '전력' in normalized_name
+    
+    # 대안 검색 방법 (인코딩 문제 해결을 위해)
+    gas_found_alt = normalized_name.find('도시가스') != -1
+    power_found_alt = normalized_name.find('전력') != -1
+    
+    # st.info(f"    '도시가스' 포함 여부: {gas_found} (대안: {gas_found_alt})")
+    # st.info(f"    '전력' 포함 여부: {power_found} (대안: {power_found_alt})")
+    
+    # 최종 결과 결정 (둘 중 하나라도 True면 True)
+    gas_found = gas_found or gas_found_alt
+    power_found = power_found or power_found_alt
+    
+    # 키워드 위치 찾기
+    if gas_found:
+        gas_index = normalized_name.find('도시가스')
+        # st.info(f"    '도시가스' 위치: {gas_index}")
+    
+    if power_found:
+        power_index = normalized_name.find('전력')
+        # st.info(f"    '전력' 위치: {power_index}")
+    
+    # 추가 디버깅: 각 키워드의 개별 문자 검색
+    # st.info(f"  🔍 상세 키워드 분석:")
+    # st.info(f"    '전력' 문자열: {repr('전력')}")
+    # st.info(f"    '도시가스' 문자열: {repr('도시가스')}")
+    
+    # 각 키워드의 개별 문자 확인
+    for keyword in ['전력', '도시가스']:
+        found_chars = []
+        for char in keyword:
+            if char in normalized_name:
+                found_chars.append(char)
+        # st.info(f"    '{keyword}' 개별 문자 발견: {found_chars}")
+    
+    # 분류 결정
+    if gas_found:
+        # st.info(f"  ✅ '도시가스' 키워드 발견 → Gas 분류")
         return 'gas'
-    elif '전력' in normalized_name:
-        st.info(f"  ✅ '전력' 키워드 발견 → Power 분류")
+    elif power_found:
+        # st.info(f"  ✅ '전력' 키워드 발견 → Power 분류")
         return 'power'
     else:
-        st.info(f"  ⚠️ 키워드 없음 → Other 분류")
-        return 'other'
+        # st.info(f"  ⚠️ 정규화된 파일명에서 키워드 없음")
+        
+        # 원본 파일명으로 재시도
+        # st.info(f"  🔄 원본 파일명으로 재검색:")
+        original_gas_found = '도시가스' in file_name
+        original_power_found = '전력' in file_name
+        
+        # st.info(f"    원본에서 '도시가스' 포함: {original_gas_found}")
+        # st.info(f"    원본에서 '전력' 포함: {original_power_found}")
+        
+        if original_gas_found:
+            # st.info(f"  ✅ 원본 파일명에서 '도시가스' 키워드 발견 → Gas 분류")
+            return 'gas'
+        elif original_power_found:
+            # st.info(f"  ✅ 원본 파일명에서 '전력' 키워드 발견 → Power 분류")
+            return 'power'
+        else:
+            # 마지막 안전장치: 파일명의 모든 부분을 개별적으로 확인
+            # st.info(f"  🔍 최종 안전장치: 파일명 부분별 검색")
+            file_parts = re.split(r'[_\-\s\[\]\(\)]', file_name)
+            # st.info(f"    파일명 부분들: {file_parts}")
+            
+            for part in file_parts:
+                if '도시가스' in part:
+                    # st.info(f"  ✅ 파일명 부분 '{part}'에서 '도시가스' 발견 → Gas 분류")
+                    return 'gas'
+                elif '전력' in part:
+                    # st.info(f"  ✅ 파일명 부분 '{part}'에서 '전력' 발견 → Power 분류")
+                    return 'power'
+            
+            # st.info(f"  ⚠️ 모든 검색 방법에서 키워드 없음 → Other 분류")
+            # st.info(f"  📋 최종 분류 결과: other")
+            return 'other'
 
 def get_index_dir(category):
     """분류에 따른 인덱스 디렉토리를 반환합니다."""
@@ -264,23 +363,23 @@ def process_document(file_path):
         st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
         return []
     
-    st.info(f"  📄 원본 텍스트 길이: {len(text)}자")
+    # st.info(f"  📄 원본 텍스트 길이: {len(text)}자")
     
     # 텍스트 정규화
     original_text = text
     text = normalize_text(text)
-    st.info(f"  📄 정규화 후 텍스트 길이: {len(text)}자")
+    # st.info(f"  📄 정규화 후 텍스트 길이: {len(text)}자")
     
     # 정규화 과정에서 텍스트가 너무 많이 제거되었는지 확인
     if len(text) < len(original_text) * 0.1:  # 90% 이상 제거된 경우
         st.warning(f"  ⚠️ 텍스트가 너무 많이 제거되었습니다. 원본: {len(original_text)}자 → 정규화: {len(text)}자")
         # 정규화를 건너뛰고 원본 텍스트 사용
         text = original_text
-        st.info(f"  🔄 원본 텍스트를 사용합니다.")
+        # st.info(f"  🔄 원본 텍스트를 사용합니다.")
     
     # LangChain 텍스트 분할기 사용
     chunks = text_splitter.split_text(text)
-    st.info(f"  📄 청킹 후 청크 수: {len(chunks)}개")
+    # st.info(f"  📄 청킹 후 청크 수: {len(chunks)}개")
     
     # 파일명에서 추가 메타데이터 추출
     additional_metadata = extract_metadata_from_filename(filename)
@@ -305,9 +404,10 @@ def process_document(file_path):
             )
             documents.append(doc)
         else:
-            st.info(f"  ⚠️ 청크 {i}가 너무 짧아 제외됨: {len(chunk.strip())}자")
+            # st.info(f"  ⚠️ 청크 {i}가 너무 짧아 제외됨: {len(chunk.strip())}자")
+            pass
     
-    st.info(f"[CHUNKS] {filename} → {len(documents)}개 생성")
+    # st.info(f"[CHUNKS] {filename} → {len(documents)}개 생성")
     return documents
 
 # 벡터 인덱스 구축
@@ -322,7 +422,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     # 문서 저장 디렉토리 생성
     docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
     docs_dir.mkdir(parents=True, exist_ok=True)
-    st.info(f"📁 문서 저장 디렉토리: {docs_dir}")
+    # st.info(f"📁 문서 저장 디렉토리: {docs_dir}")
     
     # 임베딩 모델 초기화
     embedding_model = create_embedding_model()
@@ -343,12 +443,12 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getvalue())
         
-        st.info(f"  💾 파일 저장: {file_path}")
+        # st.info(f"  💾 파일 저장: {file_path}")
         
         try:
             # 파일 분류
             category = classify_file(uploaded_file.name)
-            st.info(f"  → 분류: {category}")
+            # st.info(f"  → 분류: {category}")
             
             documents = process_document(str(file_path))
             
@@ -371,10 +471,10 @@ def build_vector_index_from_uploaded_files(uploaded_files):
                 file_path.unlink()
             continue
     
-    st.info(f"\n📊 전체 문서 수: {len(uploaded_files)}개")
-    st.info(f"🔖 Gas 문서: {len(gas_documents)}개")
-    st.info(f"🔖 Power 문서: {len(power_documents)}개")
-    st.info(f"🔖 Other 문서: {len(other_documents)}개")
+    # st.info(f"\n📊 전체 문서 수: {len(uploaded_files)}개")
+    # st.info(f"🔖 Gas 문서: {len(gas_documents)}개")
+    # st.info(f"🔖 Power 문서: {len(power_documents)}개")
+    # st.info(f"🔖 Other 문서: {len(other_documents)}개")
     
     # 분류별로 인덱스 생성
     categories = [
@@ -386,7 +486,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     success_count = 0
     for category, documents, category_name in categories:
         if len(documents) == 0:
-            st.warning(f"⚠️ {category_name} 문서가 없어 인덱스를 생성하지 않습니다.")
+            # st.warning(f"⚠️ {category_name} 문서가 없어 인덱스를 생성하지 않습니다.")
             continue
             
         st.info(f"\n🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
@@ -396,7 +496,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
             vectorstore = FAISS.from_documents(documents, embedding_model)
         except Exception as e:
             if "max_tokens_per_request" in str(e):
-                st.info(f"토큰 제한으로 인해 배치 크기를 500으로 조정합니다...")
+                # st.info(f"토큰 제한으로 인해 배치 크기를 500으로 조정합니다...")
                 try:
                     medium_embedding_model = OpenAIEmbeddings(
                         model="text-embedding-3-small",
@@ -406,7 +506,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
                     vectorstore = FAISS.from_documents(documents, medium_embedding_model)
                 except Exception as e2:
                     if "max_tokens_per_request" in str(e2):
-                        st.info(f"토큰 제한으로 인해 배치 크기를 100으로 조정합니다...")
+                        # st.info(f"토큰 제한으로 인해 배치 크기를 100으로 조정합니다...")
                         small_embedding_model = OpenAIEmbeddings(
                             model="text-embedding-3-small",
                             chunk_size=100,
@@ -589,7 +689,6 @@ def main():
                 with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
                     success = build_vector_index_from_uploaded_files(uploaded_files)
                     if success:
-                        st.balloons()
                         st.success("✅ 인덱스 생성이 완료되었습니다!")
                         
                         # 백엔드 인덱스 리로드
@@ -630,7 +729,8 @@ def main():
         st.header("📁 저장된 문서 파일")
         docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
         if docs_dir.exists() and any(docs_dir.iterdir()):
-            files = list(docs_dir.glob("*"))
+            # 숨김 파일 제외하고 파일 목록 가져오기
+            files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
             if files:
                 st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
                 for file in sorted(files):
