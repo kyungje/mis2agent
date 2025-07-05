@@ -21,7 +21,7 @@ class LegalAgent(BaseAgent):
         try:
             self.rag_tool = LegalRAGTool(index_path)
         except Exception as e:
-            print(f"Warning: FAISS index could not be loaded. Error: {e}")
+            logger.warning(f"LegalRAGTool could not be loaded. Error: {e}")
             self.rag_tool = None
         
         # 검증기 초기화

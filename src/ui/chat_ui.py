@@ -24,6 +24,7 @@ load_dotenv()
 
 # API 엔드포인트 설정
 API_URL = "http://localhost:8000/chat"
+RELOAD_API_URL = "http://localhost:8000/reload-indexes"
 
 def latex_to_text(text):
     """
@@ -164,23 +165,57 @@ def normalize_text(text):
     # 수식 기호 보존: √ ± ≈ ∞ × ÷ π ² ³ ^ / = % 등
     math_symbols = "√±≈∞×÷π²³^=/%"
 
-    # 허용 문자 정의: 문자, 숫자, 공백, 일부 수식 기호, 일반 문장부호
-    allowed_chars = r'\w\s\.\,\!\?\;\:\-\(\)\[\]\{\}' + re.escape(math_symbols)
-    text = re.sub(rf'[^\w\s{re.escape(".,!?;:-()[]{}")}{"".join(math_symbols)}]', '', text)
+    # 더 관대한 정규화: 한글, 영문, 숫자, 공백, 문장부호, 수식 기호만 유지
+    # 한글: 가-힣
+    # 영문: A-Za-z
+    # 숫자: 0-9
+    # 공백: \s
+    # 문장부호: .,!?;:-()[]{}
+    # 수식 기호: √±≈∞×÷π²³^=/%
+    # 추가 허용 문자: + (플러스 기호)
+    
+    allowed_pattern = r'[가-힣A-Za-z0-9\s.,!?;:\-\(\)\[\]\{\}' + re.escape(math_symbols + '+') + r']'
+    text = re.sub(rf'[^{allowed_pattern}]', ' ', text)
 
     # 연속 공백 정리
     text = re.sub(r'\s+', ' ', text)
 
     return text.strip()
 
+# 파일명 정규화 함수
+def normalize_filename(file_name):
+    """파일명을 정규화하여 분류에 사용합니다."""
+    # 파일 확장자 제거
+    name_without_ext = os.path.splitext(file_name)[0]
+    
+    # 특수문자 제거 (하이픈, 언더스코어, 플러스 등은 공백으로 변환)
+    normalized = re.sub(r'[\[\]\(\)\+\-\_]', ' ', name_without_ext)
+    
+    # 연속 공백을 단일 공백으로 변환
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    # 앞뒤 공백 제거
+    normalized = normalized.strip()
+    
+    return normalized
+
 # 파일 분류 함수
 def classify_file(file_name):
     """파일명에 따라 분류를 결정합니다."""
-    if '도시가스' in file_name:
+    st.info(f"🔍 파일 분류 중: '{file_name}'")
+    
+    # 파일명 정규화
+    normalized_name = normalize_filename(file_name)
+    st.info(f"  📝 정규화된 파일명: '{normalized_name}'")
+    
+    if '도시가스' in normalized_name:
+        st.info(f"  ✅ '도시가스' 키워드 발견 → Gas 분류")
         return 'gas'
-    elif '전력' in file_name:
+    elif '전력' in normalized_name:
+        st.info(f"  ✅ '전력' 키워드 발견 → Power 분류")
         return 'power'
     else:
+        st.info(f"  ⚠️ 키워드 없음 → Other 분류")
         return 'other'
 
 def get_index_dir(category):
@@ -228,12 +263,24 @@ def process_document(file_path):
     if not text:
         st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
         return []
-        
+    
+    st.info(f"  📄 원본 텍스트 길이: {len(text)}자")
+    
     # 텍스트 정규화
+    original_text = text
     text = normalize_text(text)
+    st.info(f"  📄 정규화 후 텍스트 길이: {len(text)}자")
+    
+    # 정규화 과정에서 텍스트가 너무 많이 제거되었는지 확인
+    if len(text) < len(original_text) * 0.1:  # 90% 이상 제거된 경우
+        st.warning(f"  ⚠️ 텍스트가 너무 많이 제거되었습니다. 원본: {len(original_text)}자 → 정규화: {len(text)}자")
+        # 정규화를 건너뛰고 원본 텍스트 사용
+        text = original_text
+        st.info(f"  🔄 원본 텍스트를 사용합니다.")
     
     # LangChain 텍스트 분할기 사용
     chunks = text_splitter.split_text(text)
+    st.info(f"  📄 청킹 후 청크 수: {len(chunks)}개")
     
     # 파일명에서 추가 메타데이터 추출
     additional_metadata = extract_metadata_from_filename(filename)
@@ -257,6 +304,8 @@ def process_document(file_path):
                 metadata=metadata
             )
             documents.append(doc)
+        else:
+            st.info(f"  ⚠️ 청크 {i}가 너무 짧아 제외됨: {len(chunk.strip())}자")
     
     st.info(f"[CHUNKS] {filename} → {len(documents)}개 생성")
     return documents
@@ -269,6 +318,11 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         return False
     
     st.info("📂 문서 인덱싱 시작")
+    
+    # 문서 저장 디렉토리 생성
+    docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    st.info(f"📁 문서 저장 디렉토리: {docs_dir}")
     
     # 임베딩 모델 초기화
     embedding_model = create_embedding_model()
@@ -284,17 +338,19 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     for i, uploaded_file in enumerate(uploaded_files, 1):
         st.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
         
-        # 임시 파일로 저장
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
+        # 실제 파일을 docs 디렉토리에 저장
+        file_path = docs_dir / uploaded_file.name
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        
+        st.info(f"  💾 파일 저장: {file_path}")
         
         try:
             # 파일 분류
             category = classify_file(uploaded_file.name)
             st.info(f"  → 분류: {category}")
             
-            documents = process_document(tmp_file_path)
+            documents = process_document(str(file_path))
             
             # 분류별로 문서 추가
             if category == 'gas':
@@ -308,9 +364,12 @@ def build_vector_index_from_uploaded_files(uploaded_files):
             del documents
             gc.collect()
             
-        finally:
-            # 임시 파일 삭제
-            os.unlink(tmp_file_path)
+        except Exception as e:
+            st.error(f"  ❌ 파일 처리 오류: {e}")
+            # 오류 발생 시 저장된 파일 삭제
+            if file_path.exists():
+                file_path.unlink()
+            continue
     
     st.info(f"\n📊 전체 문서 수: {len(uploaded_files)}개")
     st.info(f"🔖 Gas 문서: {len(gas_documents)}개")
@@ -373,6 +432,25 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         return True
     else:
         st.error("❌ 인덱스 생성에 실패했습니다.")
+        return False
+
+def reload_backend_indexes():
+    """백엔드의 인덱스를 다시 로드합니다."""
+    try:
+        st.info("🔄 백엔드 인덱스 리로드 중...")
+        response = requests.post(RELOAD_API_URL)
+        response.raise_for_status()
+        
+        result = response.json()
+        if result.get("success"):
+            st.success("✅ 백엔드 인덱스 리로드 완료!")
+            return True
+        else:
+            st.error(f"❌ 백엔드 인덱스 리로드 실패: {result.get('message', '알 수 없는 오류')}")
+            return False
+    except Exception as e:
+        st.error(f"❌ 백엔드 인덱스 리로드 중 오류: {str(e)}")
+        st.warning("⚠️ FastAPI 서버가 실행 중인지 확인해주세요.")
         return False
 
 def initialize_session_state():
@@ -503,14 +581,23 @@ def main():
             st.info(f"📁 {len(uploaded_files)}개 파일이 선택되었습니다:")
             for file in uploaded_files:
                 category = classify_file(file.name)
-                st.write(f"- {file.name} ({category} 분류)")
+                st.write(f"- **{file.name}** → **{category}** 분류")
+                if category == 'other':
+                    st.warning(f"  ⚠️ '{file.name}'이 'other'로 분류되었습니다. 파일명에 '도시가스' 또는 '전력'이 포함되어 있는지 확인해주세요.")
         if st.button("🚀 인덱스 생성 시작", type="primary", disabled=not uploaded_files):
             try:
                 with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
                     success = build_vector_index_from_uploaded_files(uploaded_files)
                     if success:
                         st.balloons()
-                        st.success("✅ 인덱스 생성이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
+                        st.success("✅ 인덱스 생성이 완료되었습니다!")
+                        
+                        # 백엔드 인덱스 리로드
+                        reload_success = reload_backend_indexes()
+                        if reload_success:
+                            st.success("🎉 모든 작업이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
+                        else:
+                            st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 수동으로 리로드해주세요.")
                     else:
                         st.error("❌ 인덱스 생성에 실패했습니다. 다시 시도해주세요.")
             except Exception as e:
@@ -533,6 +620,28 @@ def main():
                 st.success("✅ Other 인덱스 존재")
             else:
                 st.warning("⚠️ Other 인덱스 없음")
+        
+        # 수동 리로드 버튼
+        st.header("🔄 백엔드 인덱스 관리")
+        if st.button("🔄 백엔드 인덱스 리로드", type="secondary"):
+            reload_backend_indexes()
+        
+        # 저장된 문서 파일 목록 표시
+        st.header("📁 저장된 문서 파일")
+        docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
+        if docs_dir.exists() and any(docs_dir.iterdir()):
+            files = list(docs_dir.glob("*"))
+            if files:
+                st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
+                for file in sorted(files):
+                    file_size = file.stat().st_size
+                    file_size_mb = file_size / (1024 * 1024)
+                    category = classify_file(file.name)
+                    st.write(f"- **{file.name}** ({category} 분류, {file_size_mb:.2f} MB)")
+            else:
+                st.info("📂 저장된 파일이 없습니다.")
+        else:
+            st.info("📂 문서 저장 디렉토리가 없습니다.")
 
 if __name__ == "__main__":
     main() 

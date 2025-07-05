@@ -21,7 +21,7 @@ class PowerAgent(BaseAgent):
         try:
             self.rag_tool = PowerRAGTool(index_path)
         except Exception as e:
-            print(f"Warning: Power FAISS index could not be loaded. Error: {e}")
+            logger.warning(f"PowerRAGTool could not be loaded. Error: {e}")
             self.rag_tool = None
         
         # 검증기 초기화

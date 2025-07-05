@@ -36,11 +36,31 @@ class OthersRAGTool(BaseTool):
             # 인덱스 파일 경로 확인
             logger.info(f"Checking if index_path exists: {os.path.exists(index_path)}")
             if not os.path.exists(index_path):
-                logger.error(f"Index path does not exist: {index_path}")
-                raise FileNotFoundError(f"기타 문서 FAISS 인덱스 디렉토리를 찾을 수 없습니다: {index_path}")
+                logger.warning(f"Index path does not exist: {index_path}")
+                logger.info("OthersRAGTool will be initialized without vectorstore")
+                self._vectorstore = None
+                self._retriever = None
+                return
             
             # 디렉토리 내용 확인
-            logger.info(f"Contents of index_path: {os.listdir(index_path)}")
+            try:
+                contents = os.listdir(index_path)
+                logger.info(f"Contents of index_path: {contents}")
+                
+                # index.faiss 파일이 있는지 확인
+                faiss_files = [f for f in contents if f.endswith('.faiss')]
+                if not faiss_files:
+                    logger.warning(f"No .faiss files found in {index_path}")
+                    logger.info("OthersRAGTool will be initialized without vectorstore")
+                    self._vectorstore = None
+                    self._retriever = None
+                    return
+                    
+            except Exception as e:
+                logger.warning(f"Error reading directory contents: {e}")
+                self._vectorstore = None
+                self._retriever = None
+                return
             
             # FAISS 벡터스토어 로드
             logger.info(f"Loading FAISS vectorstore from {index_path}")
@@ -61,7 +81,9 @@ class OthersRAGTool(BaseTool):
         except Exception as e:
             logger.error(f"Error initializing OthersRAGTool: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            raise Exception(f"기타 문서 FAISS 인덱스 로드 중 오류 발생: {str(e)}")
+            logger.warning("OthersRAGTool will be initialized without vectorstore")
+            self._vectorstore = None
+            self._retriever = None
     
     def _run(self, query: str, search_strategy: str = "default") -> str:
         """기타 문서들에서 관련 정보를 검색합니다."""
@@ -69,8 +91,8 @@ class OthersRAGTool(BaseTool):
         
         try:
             if not self._retriever:
-                logger.error("Retriever is not initialized")
-                return "죄송합니다. 기타 문서 RAG 검색 시스템이 초기화되지 않았습니다."
+                logger.warning("Retriever is not initialized - no other documents index available")
+                return "기타 문서 인덱스가 없습니다. 일반 대화로 응답합니다."
             
             # 검색 전략에 따른 검색 수행
             if search_strategy == "expanded":

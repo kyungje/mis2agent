@@ -51,6 +51,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
 
+class ReloadResponse(BaseModel):
+    message: str
+    success: bool
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """채팅 메시지를 처리하고 응답을 반환합니다."""
@@ -65,6 +69,32 @@ async def chat(request: ChatRequest):
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reload-indexes", response_model=ReloadResponse)
+async def reload_indexes():
+    """인덱스를 다시 로드합니다."""
+    try:
+        logger.info("Reloading indexes...")
+        
+        # 새로운 Agent 인스턴스 생성 (최신 인덱스 로드)
+        global agent
+        agent = Agent(
+            gas_index_path=gas_index_path or "dummy",
+            power_index_path=power_index_path,
+            others_index_path=others_index_path
+        )
+        
+        logger.info("Indexes reloaded successfully")
+        return ReloadResponse(
+            message="인덱스가 성공적으로 다시 로드되었습니다.",
+            success=True
+        )
+    except Exception as e:
+        logger.error(f"Error reloading indexes: {str(e)}")
+        return ReloadResponse(
+            message=f"인덱스 리로드 중 오류가 발생했습니다: {str(e)}",
+            success=False
+        )
 
 if __name__ == "__main__":
     import uvicorn
