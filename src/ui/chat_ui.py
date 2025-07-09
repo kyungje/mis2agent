@@ -425,7 +425,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     st.info("📂 문서 인덱싱 시작")
     
     # 문서 저장 디렉토리 생성
-    docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
+    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
     # st.info(f"📁 문서 저장 디렉토리: {docs_dir}")
     
@@ -760,7 +760,7 @@ def main():
         
         # 저장된 문서 파일 목록 표시
         st.header("📁 저장된 문서 파일")
-        docs_dir = Path("/Users/a07198/IdeaProjects/MIS2/src/vectordb/docs")
+        docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
         if docs_dir.exists() and any(docs_dir.iterdir()):
             # 숨김 파일 제외하고 파일 목록 가져오기
             files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
