@@ -37,11 +37,24 @@ class Agent:
         if self.power_agent:
             self.agents.append(self.power_agent)
     
-    async def _detect_ambiguous_question(self, question: str) -> Dict[str, Any]:
+    async def _detect_ambiguous_question(self, question: str, chat_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """질문이 애매한지 판단하고 가능한 에이전트들을 반환합니다."""
         try:
+            # 대화 기록 컨텍스트 생성
+            context_str = ""
+            if chat_history:
+                # 최근 3개 메시지만 컨텍스트로 사용
+                recent_history = chat_history[-3:]
+                context_parts = []
+                for msg in recent_history:
+                    if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                        context_parts.append(f"{msg['role']}: {msg['content']}")
+                
+                if context_parts:
+                    context_str = f"\n\n이전 대화 기록:\n{chr(10).join(context_parts)}\n"
+            
             prompt = f"""다음 질문을 분석하고, 어떤 AI Agent가 적합한지 판단해주세요.
-
+{context_str}
 사용 가능한 Agent:
 1. legal_agent: 서울특별시 도시가스회사 공급규정 관련 질문
    - 가스 공급, 요금, 계약, 안전, 설비 관련 질문
@@ -52,10 +65,13 @@ class Agent:
    - 전력, 전기, 요금, 계약, 안전, 설비 관련 질문
    - 전기 압력, 전압 관련 질문
    - 한국전력, 전기사업법 관련 질문
+   - 발전, 송전, 배전, 복합발전기, 기동비용 등 전력 시스템 관련 질문
 
 3. general_agent: 일반적인 대화, 위 두 도메인에 해당하지 않는 질문
 
-질문: {question}
+현재 질문: {question}
+
+**중요: 이전 대화 맥락을 고려하여 판단하세요. 후속 질문의 경우 이전에 어떤 주제에 대해 이야기했는지 참고하세요.**
 
 다음 형식으로 답변해주세요:
 confidence: [높음/중간/낮음] (이 질문이 어떤 도메인인지 확신하는 정도)
@@ -109,12 +125,25 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
                 "reason": f"오류 발생: {str(e)}"
             }
 
-    async def _select_agent_with_ai(self, question: str) -> BaseAgent:
+    async def _select_agent_with_ai(self, question: str, chat_history: Optional[List[Dict[str, str]]] = None) -> BaseAgent:
         """AI를 사용하여 질문에 가장 적합한 Agent를 선택합니다."""
         try:
+            # 대화 기록 컨텍스트 생성
+            context_str = ""
+            if chat_history:
+                # 최근 3개 메시지만 컨텍스트로 사용
+                recent_history = chat_history[-3:]
+                context_parts = []
+                for msg in recent_history:
+                    if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                        context_parts.append(f"{msg['role']}: {msg['content']}")
+                
+                if context_parts:
+                    context_str = f"\n\n이전 대화 기록:\n{chr(10).join(context_parts)}\n"
+            
             # AI 기반 Agent 선택을 위한 프롬프트
             prompt = f"""다음 질문에 가장 적합한 AI Agent를 선택해주세요.
-
+{context_str}
 사용 가능한 Agent:
 1. legal_agent: 서울특별시 도시가스회사 공급규정 관련 질문 처리
    - 가스 공급, 요금, 계약, 안전, 설비 관련 질문
@@ -126,10 +155,16 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
    - 전력, 전기, 요금, 계약, 안전, 설비 관련 질문
    - 한국전력, 전기사업법 관련 질문
    - 전기 사용, 계량, 송전, 배전, 발전 관련 질문
+   - 복합발전기, 기동비용, 전력 시스템 운영 관련 질문
 
 3. general_agent: 일반적인 대화, 위 두 도메인에 해당하지 않는 질문 처리
 
-질문: {question}
+현재 질문: {question}
+
+**중요 지침:**
+- 이전 대화 맥락을 반드시 고려하세요
+- 후속 질문("구체적인 수식", "더 자세히", "예시" 등)의 경우, 이전에 논의된 주제와 같은 도메인으로 분류하세요
+- 애매한 단어라도 이전 맥락이 있다면 그 맥락을 우선시하세요
 
 위 질문에 가장 적합한 Agent를 다음 중 하나로만 선택해주세요:
 - legal_agent
@@ -198,13 +233,18 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
                 # 대화 기록을 원본 형식 그대로 유지
                 chat_history = messages[:-1]  # 마지막 메시지 제외
                 
-                # 질문의 애매함 판단
-                ambiguity_result = await self._detect_ambiguous_question(last_user_message)
+                # 질문의 애매함 판단 (대화 기록 포함)
+                ambiguity_result = await self._detect_ambiguous_question(last_user_message, chat_history)
                 
-                # 확신도가 낮고 여러 에이전트가 가능한 경우 사용자에게 구체적 정보 요청
-                if (ambiguity_result["confidence"] == "낮음" and 
-                    len(ambiguity_result["possible_agents"]) > 1):
-                    
+                # 확신도가 낮고 여러 에이전트가 가능한 경우만 사용자에게 구체적 정보 요청
+                # 단, 이전 대화 기록이 있다면 맥락을 고려하여 더 관대하게 처리
+                should_ask_clarification = (
+                    ambiguity_result["confidence"] == "낮음" and 
+                    len(ambiguity_result["possible_agents"]) > 1 and
+                    len(chat_history) == 0  # 첫 번째 질문일 때만 명확화 요청
+                )
+                
+                if should_ask_clarification:
                     logger.info(f"Ambiguous question detected: {ambiguity_result['reason']}")
                     
                     # 가능한 영역들을 설명하며 구체적인 정보 요청
@@ -215,9 +255,9 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
                     
                     return clarification_response
                 
-                # 확신도가 높거나 애매하지 않은 경우 선택된 에이전트로 처리
+                # 확신도가 높거나 애매하지 않은 경우 또는 후속 질문인 경우 선택된 에이전트로 처리
                 chosen_agent = self._get_agent_by_name(ambiguity_result["primary_agent"])
-                logger.info(f"Selected Agent: {type(chosen_agent).__name__} (confidence: {ambiguity_result['confidence']})")
+                logger.info(f"Selected Agent: {type(chosen_agent).__name__} (confidence: {ambiguity_result['confidence']}, context considered: {len(chat_history) > 0})")
                 
                 # 선택된 Agent로 응답 생성
                 if isinstance(chosen_agent, LegalAgent):
