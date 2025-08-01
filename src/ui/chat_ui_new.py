@@ -1,4 +1,4 @@
-# chat_ui.py (UI 변경된 버전)
+# chat_ui_docinsight.py (DocInsight AI 스타일 적용 전체 버전)
 import streamlit as st
 import requests
 import time
@@ -6,14 +6,434 @@ import re
 import os
 from dotenv import load_dotenv
 
-# 페이지 설정을 가장 먼저 실행
+# 문서 업로드 관련 추가 import
+import json
+from typing import List, Dict, Any
+import tempfile
+import shutil
+from pathlib import Path
+import unicodedata
+
+# build_faiss_with_metadata.py에서 필요한 모듈들 import
+import pdfplumber
+from docx import Document
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document as LCDocument
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+import gc
+
+# 페이지 설정
 st.set_page_config(page_title="DocInsight AI", page_icon="📄", layout="wide")
-
-# .env 파일 로드
 load_dotenv()
-
-# API 엔드포인트 설정
 API_URL = "http://localhost:8000/chat"
+RELOAD_API_URL = "http://localhost:8000/reload-indexes"
+
+# === 문서 업로드를 위한 함수들 (chat_ui.py에서 복사) ===
+
+# 경로 설정
+BASE_DIR = Path(__file__).parent.parent / "vectordb"
+DOCS_DIR = BASE_DIR / "docs"
+DB_DIR = BASE_DIR / "db"
+
+# 인덱스 분류별 경로 설정
+GAS_INDEX_DIR = DB_DIR / "gas_index"
+POWER_INDEX_DIR = DB_DIR / "power_index"
+OTHER_INDEX_DIR = DB_DIR / "other_index"
+
+# 필요한 폴더 생성
+DB_DIR.mkdir(exist_ok=True)
+GAS_INDEX_DIR.mkdir(exist_ok=True)
+POWER_INDEX_DIR.mkdir(exist_ok=True)
+OTHER_INDEX_DIR.mkdir(exist_ok=True)
+
+# OpenAI 임베딩 모델 초기화
+def create_embedding_model():
+    """동적으로 배치 크기를 조정하여 임베딩 모델을 생성합니다."""
+    chunk_size = 1000
+    
+    try:
+        embedding_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            chunk_size=chunk_size,
+            max_retries=3
+        )
+        return embedding_model
+    except Exception as e:
+        if "max_tokens_per_request" in str(e):
+            chunk_size = 500
+            st.info(f"토큰 제한으로 인해 배치 크기를 {chunk_size}로 조정합니다.")
+            return OpenAIEmbeddings(
+                model="text-embedding-3-small",
+                chunk_size=chunk_size,
+                max_retries=3
+            )
+        else:
+            raise e
+
+# 텍스트 분할기 초기화
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=400,
+    chunk_overlap=80,
+    length_function=len,
+    separators=["\n\n", "\n", " ", ""]
+)
+
+# 문서 읽기 함수들
+def read_docx(path):
+    """DOCX 문서를 읽어서 텍스트를 추출합니다."""
+    doc = Document(path)
+    text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+    text = latex_to_text(text)
+    return text
+
+def read_pdf(path):
+    """PDF 문서를 읽어서 전체 텍스트를 추출합니다."""
+    full_text = ""
+    with pdfplumber.open(path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            try:
+                page_text = page.extract_text()
+                if page_text:
+                    page_text = latex_to_text(page_text)
+                    page_text = normalize_text(page_text)
+                    full_text += page_text + "\n"
+            except Exception as e:
+                st.warning(f"페이지 {page_num} 처리 중 오류: {str(e)}")
+    return full_text
+
+def read_txt(path):
+    """TXT 파일을 읽어서 텍스트를 추출합니다."""
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    text = latex_to_text(text)
+    return text
+
+# 텍스트 정규화
+def normalize_text(text):
+    """텍스트 정규화 (한글-영문 공백, 수식 기호 보존)"""
+    # 한글-영문 공백 정리
+    text = re.sub(r'([가-힣])([A-Za-z0-9])', r'\1 \2', text)
+    text = re.sub(r'([A-Za-z0-9])([가-힣])', r'\1 \2', text)
+
+    # 수식 기호 보존: √ ± ≈ ∞ × ÷ π ² ³ ^ / = % 등
+    math_symbols = "√±≈∞×÷π²³^=/%"
+
+    # 더 관대한 정규화: 한글, 영문, 숫자, 공백, 문장부호, 수식 기호만 유지
+    # 한글: 가-힣
+    # 영문: A-Za-z
+    # 숫자: 0-9
+    # 공백: \s
+    # 문장부호: .,!?;:-()[]{}
+    # 수식 기호: √±≈∞×÷π²³^=/%
+    # 추가 허용 문자: + (플러스 기호)
+    
+    allowed_pattern = r'[가-힣A-Za-z0-9\s.,!?;:\-\(\)\[\]\{\}' + re.escape(math_symbols + '+') + r']'
+    text = re.sub(rf'[^{allowed_pattern}]', ' ', text)
+
+    # 연속 공백 정리
+    text = re.sub(r'\s+', ' ', text)
+
+    return text.strip()
+
+# 파일명 정규화 함수
+def normalize_filename(file_name):
+    """파일명을 정규화하여 분류에 사용합니다."""
+    # 파일 확장자 제거
+    name_without_ext = os.path.splitext(file_name)[0]
+    
+    # 특수문자 제거 (하이픈, 언더스코어, 플러스 등은 공백으로 변환)
+    # 대괄호는 제거하되, 키워드가 포함된 부분은 보존
+    normalized = re.sub(r'[\[\]\(\)\+\-\_]', ' ', name_without_ext)
+    
+    # 한글이 분해되지 않도록 NFC로 정규화
+    normalized = unicodedata.normalize('NFC', normalized)
+    
+    # 키워드가 포함된 부분이 공백으로 분리되었는지 확인하고 복구
+    if ' 전력 ' in normalized or normalized.startswith('전력 ') or normalized.endswith(' 전력'):
+        # 전력 키워드 주변의 공백을 제거하여 복구
+        normalized = re.sub(r'\s+전력\s+', '전력', normalized)
+        normalized = re.sub(r'^전력\s+', '전력', normalized)
+        normalized = re.sub(r'\s+전력$', '전력', normalized)
+    
+    if ' 도시가스 ' in normalized or normalized.startswith('도시가스 ') or normalized.endswith(' 도시가스'):
+        # 도시가스 키워드 주변의 공백을 제거하여 복구
+        normalized = re.sub(r'\s+도시가스\s+', '도시가스', normalized)
+        normalized = re.sub(r'^도시가스\s+', '도시가스', normalized)
+        normalized = re.sub(r'\s+도시가스$', '도시가스', normalized)
+    
+    # 연속 공백을 단일 공백으로 변환
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    # 앞뒤 공백 제거
+    normalized = normalized.strip()
+    
+    return normalized
+
+# 파일 분류 함수
+def classify_file(file_name):
+    """파일명에 따라 분류를 결정합니다."""
+    # 파일명 정규화
+    normalized_name = normalize_filename(file_name)
+    
+    # 키워드 검색 결과 (여러 방법으로 검색)
+    gas_found = '도시가스' in normalized_name
+    power_found = '전력' in normalized_name
+    
+    # 대안 검색 방법 (인코딩 문제 해결을 위해)
+    gas_found_alt = normalized_name.find('도시가스') != -1
+    power_found_alt = normalized_name.find('전력') != -1
+    
+    # 최종 결과 결정 (둘 중 하나라도 True면 True)
+    gas_found = gas_found or gas_found_alt
+    power_found = power_found or power_found_alt
+    
+    # 분류 결정
+    if gas_found:
+        return 'gas'
+    elif power_found:
+        return 'power'
+    else:
+        # 원본 파일명으로 재시도
+        original_gas_found = '도시가스' in file_name
+        original_power_found = '전력' in file_name
+        
+        if original_gas_found:
+            return 'gas'
+        elif original_power_found:
+            return 'power'
+        else:
+            # 마지막 안전장치: 파일명의 모든 부분을 개별적으로 확인
+            file_parts = re.split(r'[_\-\s\[\]\(\)]', file_name)
+            
+            for part in file_parts:
+                if '도시가스' in part:
+                    return 'gas'
+                elif '전력' in part:
+                    return 'power'
+            
+            return 'other'
+
+def get_index_dir(category):
+    """분류에 따른 인덱스 디렉토리를 반환합니다."""
+    if category == 'gas':
+        return GAS_INDEX_DIR
+    elif category == 'power':
+        return POWER_INDEX_DIR
+    else:
+        return OTHER_INDEX_DIR
+
+def extract_metadata_from_filename(filename):
+    base_name = os.path.splitext(filename)[0]
+    parts = re.split(r'[_\-\s]', base_name)
+
+    version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
+    region_list = ['서울', '부산', '대구', '광주', '인천', '대전', '울산','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전북특별자치도', '경상남도', '경상북도']
+    region = next((p for p in parts if p in region_list), None)
+    organization_map = {'도시가스': '도시가스', '전력': '전력'}
+    organization = next((p for p in organization_map if p in parts), "기타")
+
+    return {
+        "version": version,
+        "region": region,
+        "organization": organization,
+        "title": base_name
+    }
+
+# 문서 처리 및 청킹
+def process_document(file_path):
+    """문서를 읽고 LangChain 텍스트 분할기를 사용하여 청킹합니다."""
+    filename = os.path.basename(file_path)
+    
+    # 문서 읽기
+    if file_path.endswith(".pdf"):
+        text = read_pdf(file_path)
+    elif file_path.endswith(".docx"):
+        text = read_docx(file_path)
+    elif file_path.endswith(".txt"):
+        text = read_txt(file_path)
+    else:
+        return []
+    
+    # 텍스트가 비어있으면 처리 중단
+    if not text:
+        st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
+        return []
+    
+    # 텍스트 정규화
+    original_text = text
+    text = normalize_text(text)
+    
+    # 정규화 과정에서 텍스트가 너무 많이 제거되었는지 확인
+    if len(text) < len(original_text) * 0.1:  # 90% 이상 제거된 경우
+        st.warning(f"  ⚠️ 텍스트가 너무 많이 제거되었습니다. 원본: {len(original_text)}자 → 정규화: {len(text)}자")
+        # 정규화를 건너뛰고 원본 텍스트 사용
+        text = original_text
+    
+    # LangChain 텍스트 분할기 사용
+    chunks = text_splitter.split_text(text)
+    
+    # 파일명에서 추가 메타데이터 추출
+    additional_metadata = extract_metadata_from_filename(filename)
+    
+    # 메타데이터가 포함된 LangChain 문서로 변환
+    documents = []
+    for i, chunk in enumerate(chunks):
+        if len(chunk.strip()) > 50:  # 최소 길이 필터 (50자 이상)
+            # 기본 메타데이터와 추가 메타데이터를 결합
+            metadata = {
+                "source": filename,
+                "chunk_id": i,
+                "file_path": file_path,
+                "version": additional_metadata["version"],
+                "region": additional_metadata["region"],
+                "organization": additional_metadata["organization"],
+                "title": additional_metadata["title"]
+            }
+            doc = LCDocument(
+                page_content=chunk,
+                metadata=metadata
+            )
+            documents.append(doc)
+    
+    return documents
+
+# 벡터 인덱스 구축
+def build_vector_index_from_uploaded_files(uploaded_files):
+    """업로드된 파일들로부터 벡터 인덱스를 구축합니다."""
+    if not uploaded_files:
+        st.warning("업로드된 파일이 없습니다.")
+        return False
+    
+    st.info("📂 문서 인덱싱 시작")
+    
+    # 문서 저장 디렉토리 생성
+    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 임베딩 모델 초기화
+    embedding_model = create_embedding_model()
+    
+    # 분류별로 문서 그룹화
+    gas_documents = []
+    power_documents = []
+    other_documents = []
+    
+    total_files = len(uploaded_files)
+    
+    # 파일별로 처리 및 분류
+    for i, uploaded_file in enumerate(uploaded_files, 1):
+        st.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
+        
+        # 실제 파일을 docs 디렉토리에 저장
+        file_path = docs_dir / uploaded_file.name
+        
+        # 이미 동일한 파일명이 존재하는지 확인
+        if file_path.exists():
+            st.warning(f"⚠️ '{uploaded_file.name}' 파일이 이미 존재합니다. 인덱스 생성을 건너뜁니다.")
+            return False
+        
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        
+        try:
+            # 파일 분류
+            category = classify_file(uploaded_file.name)
+            
+            documents = process_document(str(file_path))
+            
+            # 분류별로 문서 추가
+            if category == 'gas':
+                gas_documents.extend(documents)
+            elif category == 'power':
+                power_documents.extend(documents)
+            else:
+                other_documents.extend(documents)
+            
+            # 메모리 최적화
+            del documents
+            gc.collect()
+            
+        except Exception as e:
+            st.error(f"  ❌ 파일 처리 오류: {e}")
+            # 오류 발생 시 저장된 파일 삭제
+            if file_path.exists():
+                file_path.unlink()
+            continue
+    
+    # 분류별로 인덱스 생성
+    categories = [
+        ('gas', gas_documents, 'Gas'),
+        ('power', power_documents, 'Power'),
+        ('other', other_documents, 'Other')
+    ]
+    
+    success_count = 0
+    for category, documents, category_name in categories:
+        if len(documents) == 0:
+            continue
+            
+        st.info(f"\n🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+        
+        # 배치 단위로 임베딩 처리
+        try:
+            vectorstore = FAISS.from_documents(documents, embedding_model)
+        except Exception as e:
+            if "max_tokens_per_request" in str(e):
+                try:
+                    medium_embedding_model = OpenAIEmbeddings(
+                        model="text-embedding-3-small",
+                        chunk_size=500,
+                        max_retries=3
+                    )
+                    vectorstore = FAISS.from_documents(documents, medium_embedding_model)
+                except Exception as e2:
+                    if "max_tokens_per_request" in str(e2):
+                        small_embedding_model = OpenAIEmbeddings(
+                            model="text-embedding-3-small",
+                            chunk_size=100,
+                            max_retries=3
+                        )
+                        vectorstore = FAISS.from_documents(documents, small_embedding_model)
+                    else:
+                        raise e2
+            else:
+                raise e
+
+        # 인덱스 저장
+        index_dir = get_index_dir(category)
+        try:
+            vectorstore.save_local(str(index_dir))
+            st.success(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
+            success_count += 1
+        except Exception as e:
+            st.error(f"❌ {category_name} 인덱스 저장 오류: {e}")
+    
+    if success_count > 0:
+        st.success(f"\n🎉 {success_count}개 분류별 인덱스 생성 완료")
+        return True
+    else:
+        st.error("❌ 인덱스 생성에 실패했습니다.")
+        return False
+
+def reload_backend_indexes():
+    """백엔드의 인덱스를 다시 로드합니다."""
+    try:
+        st.info("🔄 백엔드 인덱스 리로드 중...")
+        response = requests.post(RELOAD_API_URL)
+        response.raise_for_status()
+        
+        result = response.json()
+        if result.get("success"):
+            st.success("✅ 백엔드 인덱스 리로드 완료!")
+            return True
+        else:
+            st.error(f"❌ 백엔드 인덱스 리로드 실패: {result.get('message', '알 수 없는 오류')}")
+            return False
+    except Exception as e:
+        st.error(f"❌ 백엔드 인덱스 리로드 중 오류: {str(e)}")
+        st.warning("⚠️ FastAPI 서버가 실행 중인지 확인해주세요.")
+        return False
 
 def latex_to_text(text):
     """
@@ -64,20 +484,21 @@ def latex_to_text(text):
 
     return text
 
-# 세션 초기화
 def initialize_session_state():
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "streaming" not in st.session_state:
         st.session_state.streaming = False
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "chat"
+    if "api_processing" not in st.session_state:
+        st.session_state.api_processing = False
 
-# 채팅 기록 출력
 def display_chat_history():
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-# 스트리밍 출력
 def stream_response(response_text: str, loading_placeholder):
     message_placeholder = st.empty()
     full_response = ""
@@ -89,140 +510,297 @@ def stream_response(response_text: str, loading_placeholder):
     message_placeholder.markdown(full_response)
     return full_response
 
-# 메시지 전송
 def send_message(user_input: str):
     if not user_input:
         return
+    
+    # API 처리 상태 시작 (즉시 설정)
+    st.session_state.api_processing = True
+    
+    # 사용자 메시지 표시
     with st.chat_message("user"):
         st.markdown(user_input)
+    
+    # 로딩 메시지 표시
     loading_placeholder = st.empty()
     with loading_placeholder:
         st.markdown('🔍 AI가 응답을 생성하고 있습니다...')
+    
+    # 메시지를 세션에 추가
     st.session_state.messages.append({"role": "user", "content": user_input})
 
+    # API 요청 데이터 준비
     request_data = {
         "messages": [
             {"role": msg["role"], "content": msg["content"]}
             for msg in st.session_state.messages
         ]
     }
+    
     try:
+        # API 호출 (chat_ui.py와 동일한 방식)
         response = requests.post(API_URL, json=request_data)
         response.raise_for_status()
+        
+        # 응답 처리
         assistant_response = response.json()["response"]
         
-        # === 여기에서 수식 변환 적용 ===
+        # 수식 변환 적용
         assistant_response = latex_to_text(assistant_response)
         
+        # API 처리 완료 상태로 변경 (응답 표시 전에)
+        st.session_state.api_processing = False
+        
+        # 스트리밍 방식으로 응답 표시
         with st.chat_message("assistant"):
             streamed_response = stream_response(assistant_response, loading_placeholder)
             st.session_state.messages.append({"role": "assistant", "content": streamed_response})
-    except requests.exceptions.ConnectionError:
-        loading_placeholder.empty()
-        st.error("❌ FastAPI 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.")
-        st.info("서버 실행: `poetry run python -m src.api.chat`")
-    except requests.exceptions.HTTPError as e:
-        loading_placeholder.empty()
-        st.error(f"❌ HTTP 오류: {e}")
-        if e.response.status_code == 500:
-            st.error("서버 내부 오류가 발생했습니다. 백엔드 로그를 확인해주세요.")
+        
     except Exception as e:
+        # 오류 발생 시에도 API 처리 완료 상태로 변경
+        st.session_state.api_processing = False
         loading_placeholder.empty()
         st.error(f"Error: {str(e)}")
+    
+    # 최종적으로 API 처리 상태 확실히 종료
+    st.session_state.api_processing = False
 
-# 메인 함수
-def main():
-    initialize_session_state()
-
-    # 좌측 사이드바 (문서 업로드 및 인덱스 관리용 유지)
-    with st.sidebar:
-        st.title("문서관리")
-        st.button("📂 문서 업로드", use_container_width=True)
-        st.button("🔄 인덱스 재생성", use_container_width=True)
-
-    # 메인 화면 (채팅 영역)
+def show_upload_page():
+    """문서 업로드 페이지를 표시합니다."""
+    st.header("📁 문서 업로드 및 인덱스 생성")
     st.markdown("""
-        <style>
-            .doc-title { font-size: 1.5rem; font-weight: bold; margin-bottom: 0.5rem; }
-            .doc-subtitle { color: #888; margin-bottom: 2rem; }
-            .chat-box { padding: 2rem 2rem 8rem 2rem; border-radius: 10px; background-color: #fff; }
-            .chat-footer { position: fixed; bottom: 0; left: 270px; width: calc(100% - 270px); padding: 1rem; background: white; border-top: 1px solid #e0e0e0; z-index: 999; }
-        </style>
-    """, unsafe_allow_html=True)
+    ### 지원 파일 형식
+    - **PDF** (.pdf)
+    - **Word 문서** (.docx) 
+    - **텍스트 파일** (.txt)
 
+    ### 파일 분류 규칙
+    - 파일명에 **'도시가스'** 포함 → Gas 분류
+    - 파일명에 **'전력'** 포함 → Power 분류  
+    - 기타 → Other 분류
+    """)
+    uploaded_files = st.file_uploader(
+        "문서 파일을 선택하세요",
+        type=['pdf', 'docx', 'txt'],
+        accept_multiple_files=True,
+        help="여러 파일을 동시에 업로드할 수 있습니다."
+    )
+    if uploaded_files:
+        st.info(f"📁 {len(uploaded_files)}개 파일이 선택되었습니다:")
+        for file in uploaded_files:
+            category = classify_file(file.name)
+            st.write(f"- **{file.name}** → **{category}** 분류")
+            if category == 'other':
+                st.warning(f"  ⚠️ '{file.name}'이 'other'로 분류되었습니다. 파일명에 '도시가스' 또는 '전력'이 포함되어 있는지 확인해주세요.")
+    if st.button("🚀 인덱스 생성 시작", type="primary", disabled=not uploaded_files):
+        try:
+            with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
+                success = build_vector_index_from_uploaded_files(uploaded_files)
+                if success:
+                    st.success("✅ 인덱스 생성이 완료되었습니다!")
+                    
+                    # 백엔드 인덱스 리로드
+                    reload_success = reload_backend_indexes()
+                    if reload_success:
+                        st.success("🎉 모든 작업이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
+                    else:
+                        st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 수동으로 리로드해주세요.")
+                else:
+                    st.error("❌ 인덱스 생성에 실패했습니다. 다시 시도해주세요.")
+        except Exception as e:
+            st.error(f"❌ 인덱스 생성 중 오류가 발생했습니다: {str(e)}")
+            st.error("API 서버가 실행되지 않았을 수 있습니다. FastAPI 서버를 먼저 실행해주세요.")
+    st.header("📊 기존 인덱스 정보")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if GAS_INDEX_DIR.exists() and any(GAS_INDEX_DIR.iterdir()):
+            st.success("✅ Gas 인덱스 존재")
+        else:
+            st.warning("⚠️ Gas 인덱스 없음")
+    with col2:
+        if POWER_INDEX_DIR.exists() and any(POWER_INDEX_DIR.iterdir()):
+            st.success("✅ Power 인덱스 존재")
+        else:
+            st.warning("⚠️ Power 인덱스 없음")
+    with col3:
+        if OTHER_INDEX_DIR.exists() and any(OTHER_INDEX_DIR.iterdir()):
+            st.success("✅ Other 인덱스 존재")
+        else:
+            st.warning("⚠️ Other 인덱스 없음")
+    
+    # 수동 리로드 버튼
+    st.header("🔄 백엔드 인덱스 관리")
+    if st.button("🔄 백엔드 인덱스 리로드", type="secondary"):
+        reload_backend_indexes()
+    
+    # 저장된 문서 파일 목록 표시
+    st.header("📁 저장된 문서 파일")
+    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+    if docs_dir.exists() and any(docs_dir.iterdir()):
+        # 숨김 파일 제외하고 파일 목록 가져오기
+        files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
+        if files:
+            st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
+            for file in sorted(files):
+                file_size = file.stat().st_size
+                file_size_mb = file_size / (1024 * 1024)
+                category = classify_file(file.name)
+                st.write(f"- **{file.name}** ({category} 분류, {file_size_mb:.2f} MB)")
+        else:
+            st.info("📂 저장된 파일이 없습니다.")
+    else:
+        st.info("📂 문서 저장 디렉토리가 없습니다.")
+
+def show_chat_page():
+    """채팅 페이지를 표시합니다."""
+    # 내부 로고 영역
     st.markdown("""
-        <div class="chat-box">
-            <div class="doc-title">📘 DocInsight AI</div>
-            <div class="doc-subtitle">문서를 업로드하고 질문하세요. 인공지능이 요약과 검색을 도와줍니다.</div>
+        <div style="background-color:#ffffff; padding: 1rem 2rem; border-radius: 6px; margin-bottom: 1rem; display: flex; align-items: center; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+            <img src="https://img.icons8.com/ios-filled/50/2d9bf0/document--v1.png" width="24px" style="margin-right: 10px;" />
+            <span style="font-size: 1.3rem; font-weight: bold; color: #111827;">DocInsight AI</span>
+        </div>
+        <div style="color: #666666; font-size: 0.95rem; margin-bottom: 1.5rem;">
+            문서를 업로드하고 질문하세요. 인공지능이 요약과 검색을 도와줍니다.
+        </div>
     """, unsafe_allow_html=True)
 
     display_chat_history()
 
-    st.markdown("""
-        </div>
-        <div class="chat-footer">
-    """, unsafe_allow_html=True)
-
-    user_input = st.chat_input("질문을 입력하세요")
+    user_input = st.chat_input("이 계약서의 효력은?")
     if user_input:
         send_message(user_input)
         st.rerun()
 
+def main():
+    initialize_session_state()
+
+    with st.sidebar:
+        st.markdown("""
+            <style>
+            .sidebar-title {
+                font-size: 1.3rem;
+                font-weight: bold;
+                margin-bottom: 1rem;
+                color: white !important;
+            }
+            </style>
+            <div class="sidebar-title">문서관리</div>
+        """, unsafe_allow_html=True)
+        
+        # API 처리 중인지 확인
+        is_processing = st.session_state.get("api_processing", False)
+        
+        # 문서업로드 버튼
+        upload_clicked = st.button(
+            "📂 문서 업로드", 
+            use_container_width=True,
+            disabled=is_processing,
+            key="upload_button"
+        )
+        
+        if upload_clicked and not is_processing:
+            st.session_state.current_page = "upload"
+            st.rerun()
+        
+        # 뒤로가기 버튼은 문서 업로드 화면에서만 표시
+        if st.session_state.current_page == "upload":
+            # 사이드바 하단으로 밀어내기 위한 적절한 spacer + 버튼 높이만큼 추가
+            st.markdown("<div style='height: calc(40vh + 2.5rem);'></div>", unsafe_allow_html=True)
+            
+            # 버튼을 1rem 위로 올리기 위한 여백
+            st.markdown("<div style='margin-bottom: 1rem;'>", unsafe_allow_html=True)
+            
+            back_clicked = st.button(
+                "← 뒤로가기", 
+                use_container_width=True,
+                disabled=is_processing,
+                key="back_button"
+            )
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            if back_clicked and not is_processing:
+                st.session_state.current_page = "chat"
+                st.rerun()
+
+    # 상단 전체 헤더 영역 어둡게 처리
     st.markdown("""
-        </div>
+        <style>
+        header[data-testid="stHeader"] {
+            background-color: #111827;
+        }
+
+        section[data-testid="stSidebar"] {
+            width: 187px !important;
+            background-color: #111827 !important;
+            color: white !important;
+            overflow-y: hidden !important;  /* 사이드바 세로 스크롤 비활성화 */
+            overflow-x: hidden !important;  /* 사이드바 가로 스크롤 비활성화 */
+        }
+
+        /* 사이드바 버튼이 disabled 상태에서도 색상 유지 */
+        section[data-testid="stSidebar"] .stButton > button {
+            background-color: #333333 !important;
+            color: white !important;
+            border-radius: 8px !important;
+            padding: 0.5rem 1rem !important;
+        }
+        section[data-testid="stSidebar"] .stButton > button:hover {
+            background-color: #555555 !important;
+        }
+        section[data-testid="stSidebar"] .stButton > button:disabled {
+            background-color: #333333 !important;
+            color: white !important;
+            opacity: 0.6 !important;
+            cursor: not-allowed !important;
+        }
+
+        /* 사이드바 토글 버튼 강조 */
+        button[data-testid="collapsedControl"] {
+            border: 2px solid #9ca3af !important;
+            border-radius: 50% !important;
+            background-color: #f3f4f6 !important;
+            width: 36px !important;
+            height: 36px !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: fixed;
+            top: 1.25rem;
+            left: 0.75rem;
+            z-index: 10000;
+        }
+        button[data-testid="collapsedControl"] svg {
+            stroke: #374151 !important;
+            width: 20px !important;
+            height: 20px !important;
+        }
+        </style>
     """, unsafe_allow_html=True)
 
+    # 현재 페이지에 따라 다른 내용 표시
+    if st.session_state.current_page == "upload":
+        show_upload_page()
+    else:
+        show_chat_page()
+
     st.markdown("""
-    <style>
-    /* 전체 폰트 통일 */
-    html, body, [class*="css"]  {
-        font-family: 'Pretendard', sans-serif !important;
-    }
-
-    /* 사이드바 스타일 */
-    section[data-testid="stSidebar"] {
-        background-color: #1E1E1E !important;
-        color: white !important;
-    }
-    section[data-testid="stSidebar"] h1, 
-    section[data-testid="stSidebar"] h2, 
-    section[data-testid="stSidebar"] h3, 
-    section[data-testid="stSidebar"] span {
-        color: white !important;
-    }
-
-    /* 사이드바 버튼 스타일 */
-    .stButton button {
-        background-color: #333333 !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.5rem 1rem !important;
-    }
-    .stButton button:hover {
-        background-color: #555555 !important;
-    }
-
-    /* 채팅 박스 영역 여백 및 배경 */
-    .chat-box {
-        padding: 2rem 2rem 8rem 2rem;
-        border-radius: 10px;
-        background-color: #ffffff;
-    }
-
-    /* 채팅 입력창 고정 하단 */
-    .chat-footer {
-        position: fixed;
-        bottom: 0;
-        left: 270px;
-        width: calc(100% - 270px);
-        padding: 1rem;
-        background: white;
-        border-top: 1px solid #e0e0e0;
-        z-index: 999;
-    }
-    </style>
+        <style>
+        html, body, [class*="css"]  {
+            font-family: 'Pretendard', sans-serif !important;
+        }
+        /* 메인 콘텐츠 영역의 버튼만 스타일 적용 (사이드바 제외) */
+        .main .stButton button {
+            background-color: #333333 !important;
+            color: white !important;
+            border-radius: 8px !important;
+            padding: 0.5rem 1rem !important;
+        }
+        .main .stButton button:hover {
+            background-color: #555555 !important;
+        }
+        </style>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    main() 
+    main()
