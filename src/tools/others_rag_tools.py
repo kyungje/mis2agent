@@ -4,6 +4,8 @@ from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.retrievers import BaseRetriever
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain_openai import ChatOpenAI
 from pydantic import Field, PrivateAttr
 import os
 import logging
@@ -73,11 +75,18 @@ class OthersRAGTool(BaseTool):
             
             # 검색기 설정
             logger.info("Initializing retriever")
-            self._retriever = self._vectorstore.as_retriever(
+            base_retriever = self._vectorstore.as_retriever(
                 search_type="similarity",
-                search_kwargs={"k": 2}  # 검색 결과 수를 2개로 줄여 성능 향상
+                search_kwargs={"k": 3}  # 검색 결과 수를 3개로 증가
             )
-            logger.info("Retriever initialized successfully")
+            
+            # MultiQueryRetriever로 래핑하여 다양한 쿼리 생성
+            llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+            self._retriever = MultiQueryRetriever.from_llm(
+                retriever=base_retriever,
+                llm=llm
+            )
+            logger.info("MultiQueryRetriever initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing OthersRAGTool: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
