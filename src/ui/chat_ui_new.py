@@ -8,13 +8,14 @@ from dotenv import load_dotenv
 
 # 문서 업로드 관련 추가 import
 import json
+import pandas as pd
 from typing import List, Dict, Any
 import tempfile
 import shutil
 from pathlib import Path
 import unicodedata
 
-# build_faiss_with_metadata.py에서 필요한 모듈들 import
+# 문서 처리 및 벡터 인덱스 생성을 위한 모듈들
 import pdfplumber
 from docx import Document
 from langchain_community.vectorstores import FAISS
@@ -605,32 +606,67 @@ def send_message(user_input: str):
 
 def show_upload_page():
     """문서 업로드 페이지를 표시합니다."""
-    st.header("📁 문서 업로드 및 인덱스 생성")
+    # 내부 로고 영역 (채팅 화면과 동일한 스타일)
     st.markdown("""
-    ### 지원 파일 형식
-    - **PDF** (.pdf)
-    - **Word 문서** (.docx) 
-    - **텍스트 파일** (.txt)
+        <div style="background-color:#ffffff; padding: 1rem 2rem; border-radius: 6px; margin-bottom: 1rem; display: flex; align-items: center; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+            <img src="https://img.icons8.com/ios-filled/50/2d9bf0/document--v1.png" width="24px" style="margin-right: 10px;" />
+            <span style="font-size: 1.3rem; font-weight: bold; color: #111827;">문서 업로드 </span>
+        </div>
+        <div style="color: #666666; font-size: 0.95rem; margin-bottom: 1.5rem;">
+            문서를 업로드하면 AI가 학습해요.
+        </div>
+    """, unsafe_allow_html=True)
 
-    ### 파일 분류 규칙
-    - 파일명에 **'도시가스'** 포함 → Gas 분류
-    - 파일명에 **'전력'** 포함 → Power 분류  
-    - 기타 → Other 분류
-    """)
+    st.markdown("""
+        <div style="background-color: rgba(30, 41, 59, 0.9); padding: 1rem 1.5rem; border-radius: 10px; border: 1px solid #1f2937; color: #f3f4f6; font-size: 0.95rem; line-height: 1.7;">
+        <strong style="font-size: 1.1rem; color: #ffffff;">📌 파일 분류 규칙</strong>
+        <ul style="list-style-type: '📂 '; padding-left: 1.2em; margin: 0;">
+            <li><b>도시가스</b> 키워드가 파일명에 포함 → <span style="color: #38bdf8;"><b>Gas</b></span> 분류</li>
+            <li><b>전력</b> 키워드가 파일명에 포함 → <span style="color: #38bdf8;"><b>Power</b></span> 분류</li>
+            <li>그 외 키워드일 경우 → <span style="color: #facc15;"><b>Other</b></span> 분류</li>
+        </ul>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.write("")  # 공백 추가
+    
     uploaded_files = st.file_uploader(
-        "문서 파일을 선택하세요",
+        "",
         type=['pdf', 'docx', 'txt'],
         accept_multiple_files=True,
-        help="여러 파일을 동시에 업로드할 수 있습니다."
+        help="여러 파일을 동시에 업로드할 수 있습니다.",
     )
+    st.caption("PDF, DOCX, TXT 파일을 업로드 가능 합니다. (최대 200MB)")
+
+    st.write("")  # 공백 추가
+
     if uploaded_files:
-        st.info(f"📁 {len(uploaded_files)}개 파일이 선택되었습니다:")
+        file_data = []
+
         for file in uploaded_files:
-            category = classify_file(file.name)
-            st.write(f"- **{file.name}** → **{category}** 분류")
-            if category == 'other':
-                st.warning(f"  ⚠️ '{file.name}'이 'other'로 분류되었습니다. 파일명에 '도시가스' 또는 '전력'이 포함되어 있는지 확인해주세요.")
-    if st.button("🚀 인덱스 생성 시작", type="primary", disabled=not uploaded_files):
+            file_name = file.name
+            file_size_kb = len(file.getvalue()) / 1024
+            category = classify_file(file_name)
+
+            warning_msg = ""
+            if category == "other":
+                warning_msg = "⚠️ 분류 불확실"
+
+            file_data.append({
+                "파일명": file_name,
+                "크기": f"{file_size_kb:.1f} KB" if file_size_kb < 1024 else f"{file_size_kb/1024:.2f} MB",
+                "분류": category,
+                "주의": warning_msg
+            })
+
+        df = pd.DataFrame(file_data)
+        st.markdown("#### 📄 업로드된 문서")
+        st.table(df)
+
+    else:
+        st.info("📂 업로드된 문서가 없습니다.")
+    
+    if st.button("▶️ AI 문서 학습 시작", type="primary", disabled=not uploaded_files):
         try:
             with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
                 success = build_vector_index_from_uploaded_files(uploaded_files)
@@ -648,46 +684,125 @@ def show_upload_page():
         except Exception as e:
             st.error(f"❌ 인덱스 생성 중 오류가 발생했습니다: {str(e)}")
             st.error("API 서버가 실행되지 않았을 수 있습니다. FastAPI 서버를 먼저 실행해주세요.")
-    st.header("📊 기존 인덱스 정보")
+    
+    st.write("")  # 공백 추가
+
+    # 기존 학습 정보 헤더
+    st.markdown("""
+        <div style="background-color:#ffffff; padding: 1rem 2rem; border-radius: 6px; margin-bottom: 1rem; display: flex; align-items: center; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+            <img src="https://img.icons8.com/ios-filled/50/2d9bf0/database--v1.png" width="24px" style="margin-right: 10px;" />
+            <span style="font-size: 1.3rem; font-weight: bold; color: #111827;">학습 완료된 문서 정보</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
     col1, col2, col3 = st.columns(3)
+    
+    # Gas 인덱스 카드
     with col1:
         if GAS_INDEX_DIR.exists() and any(GAS_INDEX_DIR.iterdir()):
-            st.success("✅ Gas 인덱스 존재")
+            # 저장된 문서 수 계산
+            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            gas_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'gas'] if docs_dir.exists() else []
+            doc_count = len(gas_docs)
+            
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Gas 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">도시가스 관련 문서 {doc_count}개</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-15</div>
+                </div>
+            """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Gas 인덱스 없음")
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Gas 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">도시가스 관련 문서 0개</div>
+                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                </div>
+            """, unsafe_allow_html=True)
+    
+    # Power 인덱스 카드
     with col2:
         if POWER_INDEX_DIR.exists() and any(POWER_INDEX_DIR.iterdir()):
-            st.success("✅ Power 인덱스 존재")
+            # 저장된 문서 수 계산
+            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            power_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'power'] if docs_dir.exists() else []
+            doc_count = len(power_docs)
+            
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Power 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">전력 관련 문서 {doc_count}개</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-14</div>
+                </div>
+            """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Power 인덱스 없음")
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Power 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">전력 관련 문서 0개</div>
+                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                </div>
+            """, unsafe_allow_html=True)
+    
+    # Other 인덱스 카드
     with col3:
         if OTHER_INDEX_DIR.exists() and any(OTHER_INDEX_DIR.iterdir()):
-            st.success("✅ Other 인덱스 존재")
+            # 저장된 문서 수 계산
+            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            other_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'other'] if docs_dir.exists() else []
+            doc_count = len(other_docs)
+            
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Other 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">기타 문서 {doc_count}개</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-13</div>
+                </div>
+            """, unsafe_allow_html=True)
         else:
-            st.warning("⚠️ Other 인덱스 없음")
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Other 인덱스</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">기타 문서 0개</div>
+                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                </div>
+            """, unsafe_allow_html=True)
     
-    # 수동 리로드 버튼
-    st.header("🔄 백엔드 인덱스 관리")
-    if st.button("🔄 백엔드 인덱스 리로드", type="secondary"):
-        reload_backend_indexes()
+    
+    st.write("")  # 공백 추가
     
     # 저장된 문서 파일 목록 표시
-    st.header("📁 저장된 문서 파일")
     docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
     if docs_dir.exists() and any(docs_dir.iterdir()):
         # 숨김 파일 제외하고 파일 목록 가져오기
         files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
         if files:
             st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
+            
+            # 파일 데이터를 표 형태로 준비
+            file_data = []
             for file in sorted(files):
                 file_size = file.stat().st_size
-                file_size_mb = file_size / (1024 * 1024)
+                file_size_kb = file_size / 1024
                 category = classify_file(file.name)
-                st.write(f"- **{file.name}** ({category} 분류, {file_size_mb:.2f} MB)")
+                
+                file_data.append({
+                    "파일명": file.name,
+                    "사이즈": f"{file_size_kb:.1f} KB" if file_size_kb < 1024 else f"{file_size_kb/1024:.2f} MB",
+                    "분류": category
+                })
+            
+            df = pd.DataFrame(file_data)
+            st.table(df)
         else:
             st.info("📂 저장된 파일이 없습니다.")
     else:
         st.info("📂 문서 저장 디렉토리가 없습니다.")
+
+    # 수동 리로드 버튼
+    if st.button("🔄 학습 문서 정보 리로드", type="secondary"):
+        reload_backend_indexes()
 
 def show_chat_page():
     """채팅 페이지를 표시합니다."""
@@ -742,20 +857,13 @@ def main():
         
         # 뒤로가기 버튼은 문서 업로드 화면에서만 표시
         if st.session_state.current_page == "upload":
-            # 사이드바 하단으로 밀어내기 위한 적절한 spacer + 버튼 높이만큼 추가
-            st.markdown("<div style='height: calc(40vh + 2.5rem);'></div>", unsafe_allow_html=True)
-            
-            # 버튼을 1rem 위로 올리기 위한 여백
-            st.markdown("<div style='margin-bottom: 1rem;'>", unsafe_allow_html=True)
-            
+            # 문서 업로드 버튼 바로 아래에 뒤로가기 버튼 배치
             back_clicked = st.button(
                 "← 뒤로가기", 
                 use_container_width=True,
                 disabled=is_processing,
                 key="back_button"
             )
-            
-            st.markdown("</div>", unsafe_allow_html=True)
             
             if back_clicked and not is_processing:
                 st.session_state.current_page = "chat"
@@ -774,6 +882,22 @@ def main():
             color: white !important;
             overflow-y: hidden !important;  /* 사이드바 세로 스크롤 비활성화 */
             overflow-x: hidden !important;  /* 사이드바 가로 스크롤 비활성화 */
+            height: 100vh !important;       /* 사이드바 높이를 화면 높이로 고정 */
+            max-height: 100vh !important;   /* 최대 높이 제한 */
+        }
+
+        /* 사이드바 내부 컨테이너도 스크롤 방지 */
+        section[data-testid="stSidebar"] > div {
+            overflow-y: hidden !important;
+            overflow-x: hidden !important;
+            height: 100vh !important;
+            max-height: 100vh !important;
+        }
+
+        /* 사이드바 내부 모든 요소들의 스크롤 방지 */
+        section[data-testid="stSidebar"] * {
+            overflow-y: visible !important;
+            overflow-x: visible !important;
         }
 
         /* 사이드바 버튼이 disabled 상태에서도 색상 유지 */
