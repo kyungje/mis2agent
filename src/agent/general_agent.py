@@ -1,6 +1,6 @@
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import load_prompt
+from langchain_core.prompts import load_prompt, ChatPromptTemplate
 from .base_agent import BaseAgent
 from ..validation.response_validator import ResponseValidator
 from typing import List, Optional
@@ -32,22 +32,9 @@ class GeneralAgent(BaseAgent):
         # 검증기 초기화
         self.validator = ResponseValidator()
         
-        # Agent 프롬프트 로드
-        self.prompt = load_prompt("src/agent/prompts/agentic-rag-prompt-general.yaml", encoding='utf-8')
-        
-        # Agent 생성
-        self.agent = create_openai_functions_agent(
-            llm=self.llm,
-            prompt=self.prompt,
-            tools=[self.rag_tool] if self.rag_tool else []
-        )
-        
-        # Agent 실행기 생성
-        self.agent_executor = AgentExecutor(
-            agent=self.agent,
-            tools=[self.rag_tool] if self.rag_tool else [],
-            verbose=True
-        )
+        # 프롬프트 템플릿 로드
+        prompt_data = load_prompt("src/agent/prompts/agentic-rag-prompt-general.yaml", encoding='utf-8')
+        self.prompt_template = prompt_data.template
     
     def run(self, question: str, chat_history: Optional[List] = None) -> str:
         """질문에 대한 답변을 생성합니다."""
@@ -93,11 +80,16 @@ class GeneralAgent(BaseAgent):
                     formatted_history_with_search.append(f"assistant: [참고 문서 원문]\n{search_result}")
                     
                     # 응답 생성
-                    response = self.agent_executor.invoke({
-                        "question": question,
-                        "chat_history": formatted_history_with_search
-                    })
-                    generated_response = response["output"]
+                    # 프롬프트 포맷팅
+                    formatted_prompt = self.prompt_template.format(
+                        question=question,
+                        chat_history="\n".join(formatted_history_with_search),
+                        agent_scratchpad=""
+                    )
+                    
+                    # LLM 직접 호출
+                    response = self.llm.invoke([{"role": "user", "content": formatted_prompt}])
+                    generated_response = response.content
                     
                     # 응답 품질 검증
                     response_quality, response_score = self.validator.validate_response_quality(
