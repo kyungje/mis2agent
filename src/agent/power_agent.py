@@ -59,7 +59,7 @@ class PowerAgent(BaseAgent):
                 formatted_history.append(f"{msg['role']}: {msg['content']}")
 
         # 검증 및 재시도 로직
-        max_retries = 1
+        max_retries = 2
         retry_count = 0
         search_strategies = ["default", "expanded", "keyword"]
         
