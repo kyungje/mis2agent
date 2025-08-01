@@ -114,7 +114,7 @@ class LegalRAGTool(BaseTool):
                 # 출처별 비교를 위한 검색
                 docs = self._search_with_comparison_strategy(query)
             else:
-                # 기본 검색
+                # 기본 검색 - MultiQueryRetriever로 쿼리 다양화만 사용
                 docs = self._retriever.get_relevant_documents(query)
             
             logger.info(f"Found {len(docs)} relevant documents")

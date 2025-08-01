@@ -41,22 +41,28 @@ class GeneralAgent(BaseAgent):
         if chat_history is None:
             chat_history = []
         
-        # 대화 기록을 문자열 형식으로 변환하고 최근 5개만 유지
+        # chat history 포맷팅 - 최근 5개 메시지만 유지
         formatted_history = []
-        for msg in chat_history[-5:]:  # 최근 5개 메시지만 사용
-            if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                formatted_history.append(f"{msg['role']}: {msg['content']}")
+        for message in chat_history[-5:]:  # 최근 5개 메시지만 사용
+            if isinstance(message, dict):
+                role = message.get('role', 'user')
+                content = message.get('content', '')
+                formatted_history.append(f"{role}: {content}")
+            else:
+                formatted_history.append(f"user: {message}")
 
         # 검증 및 재시도 로직
-        max_retries = 2
+        max_retries = 0  # 재시도 횟수를 0으로 설정
         retry_count = 0
-        search_strategies = ["default", "expanded", "keyword"]
+        
+        # 비교 질문인지 확인
+        is_comparison = self.validator.is_comparison_query(question)
         
         while retry_count <= max_retries:
             logger.info(f"GeneralAgent: Attempt {retry_count + 1} for question: {question[:50]}...")
             
-            # 현재 시도에 맞는 검색 전략 선택
-            current_strategy = search_strategies[min(retry_count, len(search_strategies) - 1)]
+            # 검색 전략 선택 - 비교 질문이면 comparison, 아니면 기본 MMR
+            current_strategy = "comparison" if is_comparison else "default"
             logger.info(f"GeneralAgent: Using search strategy: {current_strategy}")
             
             # RAG 도구가 있는 경우 검색 수행
