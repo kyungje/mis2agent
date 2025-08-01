@@ -12,7 +12,7 @@ class GeneralAgent(BaseAgent):
     def __init__(self, others_index_path: str = None):
         # LLM 초기화
         self.llm = ChatOpenAI(
-            model_name="gpt-4-turbo",
+            model_name="gpt-4o",
             temperature=0.7
         )
         

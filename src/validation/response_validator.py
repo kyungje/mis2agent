@@ -9,7 +9,7 @@ class ResponseValidator:
     
     def __init__(self):
         self.llm = ChatOpenAI(
-            model_name="gpt-4-turbo",
+            model_name="gpt-4o",
             temperature=0
         )
     
