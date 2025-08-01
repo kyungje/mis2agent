@@ -517,14 +517,16 @@ def send_message(user_input: str):
     # API 처리 상태 시작 (즉시 설정)
     st.session_state.api_processing = True
     
+    # 애니메이션 상태 초기화
+    if "animation_step" not in st.session_state:
+        st.session_state.animation_step = 0
+    
     # 사용자 메시지 표시
     with st.chat_message("user"):
         st.markdown(user_input)
     
-    # 로딩 메시지 표시
+    # 로딩 메시지를 위한 플레이스홀더 
     loading_placeholder = st.empty()
-    with loading_placeholder:
-        st.markdown('🔍 AI가 응답을 생성하고 있습니다...')
     
     # 메시지를 세션에 추가
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -538,17 +540,53 @@ def send_message(user_input: str):
     }
     
     try:
-        # API 호출 (chat_ui.py와 동일한 방식)
-        response = requests.post(API_URL, json=request_data)
-        response.raise_for_status()
+        # 연속된 애니메이션과 API 호출을 동시에 처리
+        dot_patterns = ["", ".", "..", "...", "...."]
+        
+        # API 호출을 별도 스레드에서 실행
+        import concurrent.futures
+        import threading
+        
+        result_container = {"response": None, "error": None, "completed": False}
+        
+        def api_call():
+            try:
+                response = requests.post(API_URL, json=request_data)
+                response.raise_for_status()
+                result_container["response"] = response.json()["response"]
+            except Exception as e:
+                result_container["error"] = str(e)
+            finally:
+                result_container["completed"] = True
+        
+        # API 호출 스레드 시작
+        api_thread = threading.Thread(target=api_call, daemon=True)
+        api_thread.start()
+        
+        # 애니메이션 실행 (API 완료까지)
+        cycle = 0
+        while not result_container["completed"]:
+            dots = dot_patterns[cycle % len(dot_patterns)]
+            loading_placeholder.markdown(
+                f"<div style='font-size: 1rem; color: #6b7280;'>🔍 AI가 응답을 생성하고 있습니다{dots}</div>",
+                unsafe_allow_html=True
+            )
+            time.sleep(0.4)
+            cycle += 1
+        
+        # API 호출 완료 대기
+        api_thread.join()
+        
+        if result_container["error"]:
+            raise Exception(result_container["error"])
         
         # 응답 처리
-        assistant_response = response.json()["response"]
+        assistant_response = result_container["response"]
         
         # 수식 변환 적용
         assistant_response = latex_to_text(assistant_response)
         
-        # API 처리 완료 상태로 변경 (응답 표시 전에)
+        # API 처리 완료 상태로 변경
         st.session_state.api_processing = False
         
         # 스트리밍 방식으로 응답 표시
@@ -666,7 +704,7 @@ def show_chat_page():
 
     display_chat_history()
 
-    user_input = st.chat_input("이 계약서의 효력은?")
+    user_input = st.chat_input("서울시 도시가스 요금 산정 방식은?")
     if user_input:
         send_message(user_input)
         st.rerun()
