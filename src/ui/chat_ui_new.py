@@ -705,19 +705,28 @@ def show_upload_page():
             gas_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'gas'] if docs_dir.exists() else []
             doc_count = len(gas_docs)
             
+            # 실제 마지막 업데이트 날짜 계산
+            import datetime
+            index_files = list(GAS_INDEX_DIR.iterdir())
+            if index_files:
+                latest_time = max(f.stat().st_mtime for f in index_files)
+                last_update = datetime.datetime.fromtimestamp(latest_time).strftime("%Y-%m-%d")
+            else:
+                last_update = "알 수 없음"
+            
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Gas 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">도시가스 관련 문서 {doc_count}개</div>
-                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-15</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Gas 문서 학습 완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 {doc_count}건</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: {last_update}</div>
                 </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Gas 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">도시가스 관련 문서 0개</div>
-                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Gas 문서 학습 미완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 0건</div>
+                    <div style="color: #999; font-size: 0.8rem;"></div>
                 </div>
             """, unsafe_allow_html=True)
     
@@ -729,19 +738,28 @@ def show_upload_page():
             power_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'power'] if docs_dir.exists() else []
             doc_count = len(power_docs)
             
+            # 실제 마지막 업데이트 날짜 계산
+            import datetime
+            index_files = list(POWER_INDEX_DIR.iterdir())
+            if index_files:
+                latest_time = max(f.stat().st_mtime for f in index_files)
+                last_update = datetime.datetime.fromtimestamp(latest_time).strftime("%Y-%m-%d")
+            else:
+                last_update = "알 수 없음"
+            
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Power 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">전력 관련 문서 {doc_count}개</div>
-                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-14</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Power 문서 학습 완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 {doc_count}건</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: {last_update}</div>
                 </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Power 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">전력 관련 문서 0개</div>
-                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Power 문서 학습 미완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 0건</div>
+                    <div style="color: #999; font-size: 0.8rem;"></div>
                 </div>
             """, unsafe_allow_html=True)
     
@@ -753,19 +771,28 @@ def show_upload_page():
             other_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'other'] if docs_dir.exists() else []
             doc_count = len(other_docs)
             
+            # 실제 마지막 업데이트 날짜 계산
+            import datetime
+            index_files = list(OTHER_INDEX_DIR.iterdir())
+            if index_files:
+                latest_time = max(f.stat().st_mtime for f in index_files)
+                last_update = datetime.datetime.fromtimestamp(latest_time).strftime("%Y-%m-%d")
+            else:
+                last_update = "알 수 없음"
+            
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Other 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">기타 문서 {doc_count}개</div>
-                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: 2025-01-13</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">✅ Other 문서 학습 완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 {doc_count}건</div>
+                    <div style="color: #999; font-size: 0.8rem;">마지막 업데이트: {last_update}</div>
                 </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 10px; border: 1px solid #e9ecef; text-align: center;">
-                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Other 인덱스</div>
-                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">기타 문서 0개</div>
-                    <div style="color: #999; font-size: 0.8rem;">인덱스 없음</div>
+                    <div style="font-weight: bold; font-size: 1.1rem; color: #333; margin-bottom: 0.5rem;">⚠️ Other 문서 학습 미완료</div>
+                    <div style="color: #666; font-size: 0.9rem; margin-bottom: 0.3rem;">학습 완료 문서 0건</div>
+                    <div style="color: #999; font-size: 0.8rem;"></div>
                 </div>
             """, unsafe_allow_html=True)
     
