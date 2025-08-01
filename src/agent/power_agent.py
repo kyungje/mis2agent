@@ -13,7 +13,7 @@ class PowerAgent(BaseAgent):
     def __init__(self, index_path: str):
         # LLM 초기화
         self.llm = ChatOpenAI(
-            model_name="gpt-4-turbo",
+            model_name="gpt-4o",
             temperature=0
         )
         
