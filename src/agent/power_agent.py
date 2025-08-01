@@ -52,14 +52,14 @@ class PowerAgent(BaseAgent):
         if not self.rag_tool:
             return "죄송합니다. 현재 전력 관련 데이터베이스가 설정되지 않아 관련 질문에 답변할 수 없습니다."
         
-        # 대화 기록을 문자열 형식으로 변환하고 최근 3개만 유지
+        # 대화 기록을 문자열 형식으로 변환하고 최근 5개만 유지
         formatted_history = []
-        for msg in chat_history[-3:]:  # 최근 3개 메시지만 사용
+        for msg in chat_history[-5:]:  # 최근 5개 메시지만 사용
             if isinstance(msg, dict) and "role" in msg and "content" in msg:
                 formatted_history.append(f"{msg['role']}: {msg['content']}")
 
         # 검증 및 재시도 로직
-        max_retries = 1
+        max_retries = 2
         retry_count = 0
         search_strategies = ["default", "expanded", "keyword"]
         

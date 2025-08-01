@@ -43,8 +43,8 @@ class Agent:
             # 대화 기록 컨텍스트 생성
             context_str = ""
             if chat_history:
-                # 최근 3개 메시지만 컨텍스트로 사용
-                recent_history = chat_history[-3:]
+                # 최근 5개 메시지만 컨텍스트로 사용
+                recent_history = chat_history[-5:]
                 context_parts = []
                 for msg in recent_history:
                     if isinstance(msg, dict) and "role" in msg and "content" in msg:
@@ -131,8 +131,8 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
             # 대화 기록 컨텍스트 생성
             context_str = ""
             if chat_history:
-                # 최근 3개 메시지만 컨텍스트로 사용
-                recent_history = chat_history[-3:]
+                # 최근 5개 메시지만 컨텍스트로 사용
+                recent_history = chat_history[-5:]
                 context_parts = []
                 for msg in recent_history:
                     if isinstance(msg, dict) and "role" in msg and "content" in msg:

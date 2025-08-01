@@ -41,6 +41,20 @@ agent = Agent(
 
 app = FastAPI(title="Chat API")
 
+# 성능 최적화: Agent 인스턴스 캐싱
+_agent_cache = None
+
+def get_agent():
+    """Agent 인스턴스를 캐시하여 재사용합니다."""
+    global _agent_cache
+    if _agent_cache is None:
+        _agent_cache = Agent(
+            gas_index_path=gas_index_path or "dummy",
+            power_index_path=power_index_path,
+            others_index_path=others_index_path
+        )
+    return _agent_cache
+
 class Message(BaseModel):
     role: str
     content: str
@@ -62,8 +76,9 @@ async def chat(request: ChatRequest):
         # 메시지 형식 변환
         messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
         
-        # Agent를 통해 응답 생성
-        response = await agent.get_response(messages)
+        # 캐시된 Agent를 통해 응답 생성
+        current_agent = get_agent()
+        response = await current_agent.get_response(messages)
         
         return ChatResponse(response=response)
     except Exception as e:
@@ -76,13 +91,12 @@ async def reload_indexes():
     try:
         logger.info("Reloading indexes...")
         
+        # 캐시된 Agent 인스턴스 초기화
+        global _agent_cache
+        _agent_cache = None  # 캐시 클리어
+        
         # 새로운 Agent 인스턴스 생성 (최신 인덱스 로드)
-        global agent
-        agent = Agent(
-            gas_index_path=gas_index_path or "dummy",
-            power_index_path=power_index_path,
-            others_index_path=others_index_path
-        )
+        get_agent()  # 캐시에 새 인스턴스 로드
         
         logger.info("Indexes reloaded successfully")
         return ReloadResponse(

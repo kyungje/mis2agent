@@ -25,6 +25,18 @@ class ResponseValidator:
             Tuple[bool, float]: (관련성 여부, 관련성 점수 0-1)
         """
         try:
+            # 빠른 휴리스틱 검증 먼저 수행
+            quick_relevance, quick_score = self._quick_relevance_check(query, search_results)
+            
+            # 휴리스틱 검증에서 명확하게 관련성이 있거나 없으면 LLM 호출 생략
+            if quick_score > 0.8:
+                logger.info(f"Quick validation passed - Query: {query[:50]}..., Score: {quick_score}")
+                return True, quick_score
+            elif quick_score < 0.2:
+                logger.info(f"Quick validation failed - Query: {query[:50]}..., Score: {quick_score}")
+                return False, quick_score
+            
+            # 경계선 케이스만 LLM으로 정확한 검증 수행
             prompt = f"""다음 질문과 검색 결과의 관련성을 평가해주세요.
 
 질문: {query}
@@ -220,7 +232,7 @@ class ResponseValidator:
         Returns:
             bool: 재시도 여부
         """
-        # 최대 재시도 횟수 제한 (2회로 변경하여 3가지 전략 모두 사용)
+        # 최대 재시도 횟수 제한 (2회로 복구하여 3가지 전략 모두 사용)
         if retry_count >= 2:
             return False
         
@@ -229,12 +241,41 @@ class ResponseValidator:
             logger.info("Comparison strategy used - no retry regardless of quality")
             return False
         
-        # 검색 결과가 관련성이 없거나 점수가 낮은 경우
-        if not search_relevance or search_score < 0.5:
+        # 더 관대한 기준 적용 (성능 향상을 위해)
+        # 검색 결과가 완전히 관련성이 없는 경우만 재시도
+        if not search_relevance and search_score < 0.3:
             return True
         
-        # 응답 품질이 낮거나 점수가 낮은 경우
-        if not response_quality or response_score < 0.6:
+        # 응답 품질이 매우 낮은 경우만 재시도
+        if not response_quality and response_score < 0.4:
             return True
         
         return False 
+    
+    def _quick_relevance_check(self, query: str, search_results: str) -> Tuple[bool, float]:
+        """
+        빠른 휴리스틱 방식으로 관련성을 검증합니다.
+        """
+        if not search_results or len(search_results.strip()) < 10:
+            return False, 0.0
+        
+        # 질문에서 키워드 추출
+        query_words = set(query.lower().split())
+        results_lower = search_results.lower()
+        
+        # 키워드 매칭 점수 계산
+        matched_words = 0
+        for word in query_words:
+            if len(word) > 1 and word in results_lower:
+                matched_words += 1
+        
+        # 기본 점수
+        match_score = matched_words / len(query_words) if query_words else 0
+        
+        # 문서 길이 보정 (너무 짧으면 관련성 낮음)
+        length_bonus = min(len(search_results) / 500, 1.0) * 0.2
+        
+        # 최종 점수
+        final_score = min(match_score + length_bonus, 1.0)
+        
+        return final_score > 0.5, final_score 
