@@ -631,10 +631,11 @@ def show_upload_page():
     st.write("")  # 공백 추가
     
     uploaded_files = st.file_uploader(
-        "",
+        "문서 파일을 선택하세요",
         type=['pdf', 'docx', 'txt'],
         accept_multiple_files=True,
         help="여러 파일을 동시에 업로드할 수 있습니다.",
+        label_visibility="collapsed"
     )
     st.caption("PDF, DOCX, TXT 파일을 업로드 가능 합니다. (최대 200MB)")
 
