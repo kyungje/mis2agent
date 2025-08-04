@@ -306,7 +306,12 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         st.warning("업로드된 파일이 없습니다.")
         return False
     
-    st.info("📂 문서 인덱싱 시작")
+    # 단계별 메시지를 위한 플레이스홀더들
+    main_status_placeholder = st.empty()
+    file_status_placeholder = st.empty()
+    index_status_placeholder = st.empty()
+    
+    main_status_placeholder.info("📂 문서 인덱싱 시작")
     
     # 문서 저장 디렉토리 생성
     docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
@@ -324,13 +329,15 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     
     # 파일별로 처리 및 분류
     for i, uploaded_file in enumerate(uploaded_files, 1):
-        st.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
+        file_status_placeholder.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
         
         # 실제 파일을 docs 디렉토리에 저장
         file_path = docs_dir / uploaded_file.name
         
         # 이미 동일한 파일명이 존재하는지 확인
         if file_path.exists():
+            file_status_placeholder.empty()
+            main_status_placeholder.empty()
             st.warning(f"⚠️ '{uploaded_file.name}' 파일이 이미 존재합니다. 인덱스 생성을 건너뜁니다.")
             return False
         
@@ -356,11 +363,16 @@ def build_vector_index_from_uploaded_files(uploaded_files):
             gc.collect()
             
         except Exception as e:
-            st.error(f"  ❌ 파일 처리 오류: {e}")
+            file_status_placeholder.empty()
+            main_status_placeholder.empty()
+            st.error(f"❌ 파일 처리 오류: {e}")
             # 오류 발생 시 저장된 파일 삭제
             if file_path.exists():
                 file_path.unlink()
             continue
+    
+    # 파일 처리 완료 메시지 삭제
+    file_status_placeholder.empty()
     
     # 분류별로 인덱스 생성
     categories = [
@@ -374,7 +386,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         if len(documents) == 0:
             continue
             
-        st.info(f"\n🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+        index_status_placeholder.info(f"🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
         
         # 배치 단위로 임베딩 처리
         try:
@@ -405,13 +417,20 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         index_dir = get_index_dir(category)
         try:
             vectorstore.save_local(str(index_dir))
-            st.success(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
+            index_status_placeholder.success(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
             success_count += 1
         except Exception as e:
+            index_status_placeholder.empty()
+            main_status_placeholder.empty()
             st.error(f"❌ {category_name} 인덱스 저장 오류: {e}")
+            return False
+    
+    # 모든 단계 완료 후 플레이스홀더들 정리
+    main_status_placeholder.empty()
+    index_status_placeholder.empty()
     
     if success_count > 0:
-        st.success(f"\n🎉 {success_count}개 분류별 인덱스 생성 완료")
+        st.success(f"🎉 {success_count}개 분류별 인덱스 생성 완료")
         return True
     else:
         st.error("❌ 인덱스 생성에 실패했습니다.")
@@ -419,19 +438,25 @@ def build_vector_index_from_uploaded_files(uploaded_files):
 
 def reload_backend_indexes():
     """백엔드의 인덱스를 다시 로드합니다."""
+    # 로딩 메시지를 위한 플레이스홀더 생성
+    loading_placeholder = st.empty()
+    
     try:
-        st.info("🔄 백엔드 인덱스 리로드 중...")
+        loading_placeholder.info("🔄 백엔드 인덱스 리로드 중...")
         response = requests.post(RELOAD_API_URL)
         response.raise_for_status()
         
         result = response.json()
         if result.get("success"):
+            loading_placeholder.empty()  # 로딩 메시지 삭제
             st.success("✅ 백엔드 인덱스 리로드 완료!")
             return True
         else:
+            loading_placeholder.empty()  # 로딩 메시지 삭제
             st.error(f"❌ 백엔드 인덱스 리로드 실패: {result.get('message', '알 수 없는 오류')}")
             return False
     except Exception as e:
+        loading_placeholder.empty()  # 로딩 메시지 삭제
         st.error(f"❌ 백엔드 인덱스 리로드 중 오류: {str(e)}")
         st.warning("⚠️ FastAPI 서버가 실행 중인지 확인해주세요.")
         return False
