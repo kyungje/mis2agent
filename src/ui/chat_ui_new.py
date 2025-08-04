@@ -613,7 +613,7 @@ def show_upload_page():
             <span style="font-size: 1.3rem; font-weight: bold; color: #111827;">문서 업로드 </span>
         </div>
         <div style="color: #666666; font-size: 0.95rem; margin-bottom: 1.5rem;">
-            문서를 업로드하면 AI가 학습해요.
+            문서를 업로드 해 AI를 학습시켜보세요.
         </div>
     """, unsafe_allow_html=True)
 
@@ -637,7 +637,7 @@ def show_upload_page():
         help="여러 파일을 동시에 업로드할 수 있습니다.",
         label_visibility="collapsed"
     )
-    st.caption("PDF, DOCX, TXT 파일을 업로드 가능 합니다. (최대 200MB)")
+    # st.caption("PDF, DOCX, TXT 파일을 업로드 가능 합니다. (최대 200MB)")
 
     st.write("")  # 공백 추가
 
@@ -656,17 +656,18 @@ def show_upload_page():
             file_data.append({
                 "파일명": file_name,
                 "크기": f"{file_size_kb:.1f} KB" if file_size_kb < 1024 else f"{file_size_kb/1024:.2f} MB",
-                "분류": category,
-                "주의": warning_msg
+                "분류": warning_msg if warning_msg else category
             })
 
         df = pd.DataFrame(file_data)
-        st.markdown("#### 📄 업로드된 문서")
+        st.markdown("""
+            <div style="background-color:#ffffff; padding: 1rem 2rem; border-radius: 6px; margin-bottom: 1rem; display: flex; align-items: center; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.04);">
+                <img src="https://img.icons8.com/ios-filled/50/2d9bf0/database--v1.png" width="24px" style="margin-right: 10px;" />
+                <span style="font-size: 1.3rem; font-weight: bold; color: #111827;">📄 업로드된 문서</span>
+            </div>
+        """, unsafe_allow_html=True)
         st.table(df)
-
-    else:
-        st.info("📂 업로드된 문서가 없습니다.")
-    
+ 
     if st.button("▶️ AI 문서 학습 시작", type="primary", disabled=not uploaded_files):
         try:
             with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
@@ -679,7 +680,7 @@ def show_upload_page():
                     if reload_success:
                         st.success("🎉 모든 작업이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
                     else:
-                        st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 수동으로 리로드해주세요.")
+                        st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 수동으로 학습 문서 정보 리로드] 버튼을 눌러 주세요.")
                 else:
                     st.error("❌ 인덱스 생성에 실패했습니다. 다시 시도해주세요.")
         except Exception as e:
@@ -806,7 +807,7 @@ def show_upload_page():
         # 숨김 파일 제외하고 파일 목록 가져오기
         files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
         if files:
-            st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
+            # st.info(f"📂 총 {len(files)}개 파일이 저장되어 있습니다:")
             
             # 파일 데이터를 표 형태로 준비
             file_data = []
