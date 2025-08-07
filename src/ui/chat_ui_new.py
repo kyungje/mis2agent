@@ -229,7 +229,10 @@ def get_index_dir(category):
 
 def extract_metadata_from_filename(filename):
     base_name = os.path.splitext(filename)[0]
-    parts = re.split(r'[_\-\s\+\(\)]', base_name)  # +와 ()도 구분자로 추가
+    parts = re.split(r'[_\-\s\+\.\(\)\[\]]', base_name)
+    
+    # 빈 문자열 제거
+    parts = [p.strip() for p in parts if p.strip()]
 
     # 버전 추출 개선: 2024, 24.01.01, 2024.7.1 등 다양한 형식 지원
     version = None
