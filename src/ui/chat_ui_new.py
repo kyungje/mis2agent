@@ -21,7 +21,7 @@ from docx import Document
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document as LCDocument
-from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import gc
 
 # 페이지 설정
@@ -72,16 +72,13 @@ def create_embedding_model():
         else:
             raise e
 
-# 텍스트 분할기 초기화 - SemanticChunker 사용
-def create_text_splitter():
-    """SemanticChunker를 생성합니다."""
-    embedding_model = create_embedding_model()
-    text_splitter = SemanticChunker(
-        embeddings=embedding_model,
-        breakpoint_threshold_type="percentile",  # 기본값
-        buffer_size=1
-    )
-    return text_splitter
+# 텍스트 분할기 초기화 - RecursiveCharacterTextSplitter 사용
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=400,
+    chunk_overlap=80,
+    length_function=len,
+    separators=["\n\n", "\n", " ", ""]
+)
 
 # 문서 읽기 함수들
 def read_docx(path):
@@ -263,7 +260,7 @@ def extract_metadata_from_filename(filename):
 
 # 문서 처리 및 청킹
 def process_document(file_path):
-    """문서를 읽고 SemanticChunker를 사용하여 청킹합니다."""
+    """문서를 읽고 RecursiveCharacterTextSplitter를 사용하여 청킹합니다."""
     filename = os.path.basename(file_path)
     
     # 문서 읽기
@@ -291,8 +288,7 @@ def process_document(file_path):
         # 정규화를 건너뛰고 원본 텍스트 사용
         text = original_text
     
-    # SemanticChunker 사용
-    text_splitter = create_text_splitter()
+    # RecursiveCharacterTextSplitter 사용
     chunks = text_splitter.split_text(text)
     
     # 파일명에서 추가 메타데이터 추출
