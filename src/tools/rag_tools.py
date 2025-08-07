@@ -355,6 +355,12 @@ class LegalRAGTool(BaseTool):
             formatted_doc += f"<content>{doc.page_content}</content>\n"
             if 'source' in doc.metadata:
                 formatted_doc += f"<source>{doc.metadata['source']}</source>\n"
+            if 'version' in doc.metadata and doc.metadata['version']:
+                formatted_doc += f"<version>{doc.metadata['version']}</version>\n"
+            if 'region' in doc.metadata and doc.metadata['region']:
+                formatted_doc += f"<region>{doc.metadata['region']}</region>\n"
+            if 'organization' in doc.metadata and doc.metadata['organization']:
+                formatted_doc += f"<organization>{doc.metadata['organization']}</organization>\n"
             if 'page' in doc.metadata:
                 formatted_doc += f"<page>{doc.metadata['page']}</page>\n"
             if 'chunk_id' in doc.metadata:
@@ -363,8 +369,6 @@ class LegalRAGTool(BaseTool):
                 formatted_doc += f"<title>{doc.metadata['title']}</title>\n"
             if 'date' in doc.metadata:
                 formatted_doc += f"<date>{doc.metadata['date']}</date>\n"
-            if 'region' in doc.metadata:
-                formatted_doc += f"<region>{doc.metadata['region']}</region>\n"
             formatted_doc += "</document>"
             formatted_docs.append(formatted_doc)
         
