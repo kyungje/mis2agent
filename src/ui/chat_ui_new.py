@@ -229,9 +229,26 @@ def get_index_dir(category):
 
 def extract_metadata_from_filename(filename):
     base_name = os.path.splitext(filename)[0]
-    parts = re.split(r'[_\-\s]', base_name)
+    parts = re.split(r'[_\-\s\+\(\)]', base_name)  # +와 ()도 구분자로 추가
 
-    version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
+    # 버전 추출 개선: 2024, 24.01.01, 2024.7.1 등 다양한 형식 지원
+    version = None
+    for part in parts:
+        # 4자리 연도 포함 날짜 (2024.7.1) - 우선순위 1
+        if re.match(r'20\d{2}\.\d{1,2}\.\d{1,2}', part):
+            version = part  # 전체 날짜 보존
+            break
+        # 2자리 연도 포함 날짜 (24.01.01) - 우선순위 2
+        elif re.match(r'\d{2}\.\d{1,2}\.\d{1,2}', part):
+            year = part.split('.')[0]
+            if int(year) >= 20:  # 20년 이후
+                version = f"20{part}"  # 2024.01.01 형태로 변환
+            break
+        # 4자리 연도만 (2024) - 우선순위 3
+        elif re.match(r'20\d{2}$', part):
+            version = part
+            break
+    
     region_list = ['서울', '부산', '대구', '광주', '인천', '대전', '울산','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전북특별자치도', '경상남도', '경상북도']
     region = next((p for p in parts if p in region_list), None)
     organization_map = {'도시가스': '도시가스', '전력': '전력'}
