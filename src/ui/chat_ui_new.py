@@ -229,7 +229,7 @@ def get_index_dir(category):
 
 def extract_metadata_from_filename(filename):
     base_name = os.path.splitext(filename)[0]
-    parts = re.split(r'[_\-\s]', base_name)
+    parts = re.split(r'[_\-\s\+\.\(\)\[\]]', base_name)
 
     version = next((p for p in parts if re.match(r'20\d{2}', p)), None)
     region_list = ['서울', '부산', '대구', '광주', '인천', '대전', '울산','경기도', '강원도', '충청북도', '충청남도' ,'전라남도','전북특별자치도', '경상남도', '경상북도']
