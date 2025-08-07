@@ -60,7 +60,7 @@ class LegalAgent(BaseAgent):
             logger.info(f"Using search strategy: {current_strategy}")
             
             # vectordb 검색 수행
-            search_result = self.rag_tool._run(question, search_strategy=current_strategy)
+            search_result = self.rag_tool._run(question, search_strategy=current_strategy, chat_history=chat_history)
             
             # 검색 결과 관련성 검증
             search_relevance, search_score = self.validator.validate_search_relevance(question, search_result)
@@ -74,7 +74,7 @@ class LegalAgent(BaseAgent):
             
             # 검색 결과를 chat history에 추가
             formatted_history_with_search = formatted_history.copy()
-            formatted_history_with_search.append(f"assistant: [참고 문서 원문]\n{search_result}")
+            formatted_history_with_search.append(f"assistant: [🔍 새로 검색된 참고 문서]\n{search_result}")
 
             # 응답 생성
             try:

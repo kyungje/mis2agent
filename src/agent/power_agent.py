@@ -60,7 +60,7 @@ class PowerAgent(BaseAgent):
             logger.info(f"Using search strategy: {current_strategy}")
             
             # vectordb 검색 수행
-            search_result = self.rag_tool._run(question, search_strategy=current_strategy)
+            search_result = self.rag_tool._run(question, search_strategy=current_strategy, chat_history=chat_history)
             
             # 검색 결과 관련성 검증
             search_relevance, search_score = self.validator.validate_search_relevance(question, search_result)
