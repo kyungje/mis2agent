@@ -35,7 +35,7 @@ class LegalAgent(BaseAgent):
         """질문에 대한 답변을 생성합니다."""
         if chat_history is None:
             chat_history = []
-        
+            
         # chat history 포맷팅 - 최근 5개 메시지만 유지
         formatted_history = []
         for message in chat_history[-5:]:  # 최근 5개 메시지만 사용
@@ -59,81 +59,68 @@ class LegalAgent(BaseAgent):
             current_strategy = "comparison" if is_comparison else "default"
             logger.info(f"Using search strategy: {current_strategy}")
             
-            # RAG 도구가 있는 경우 검색 수행
-            if self.rag_tool:
-                try:
-                    # vectordb 검색 수행
-                    search_result = self.rag_tool._run(question, search_strategy=current_strategy, chat_history=chat_history)
-                    
-                    # 검색 결과 관련성 검증
-                    search_relevance, search_score = self.validator.validate_search_relevance(question, search_result)
-                    logger.info(f"Search validation - Relevance: {search_relevance}, Score: {search_score}")
-                    
-                    # 검색 결과가 관련성이 없고 재시도 가능한 경우
-                    if not search_relevance and retry_count < max_retries:
-                        logger.info("Search results not relevant, retrying with different search strategy...")
-                        retry_count += 1
-                        continue
-                    
-                    # 검색 결과를 chat history에 추가
-                    formatted_history_with_search = formatted_history.copy()
-                    formatted_history_with_search.append(f"assistant: [🔍 새로 검색된 참고 문서]\n{search_result}")
+            # vectordb 검색 수행
+            search_result = self.rag_tool._run(question, search_strategy=current_strategy, chat_history=chat_history)
+            
+            # 검색 결과 관련성 검증
+            search_relevance, search_score = self.validator.validate_search_relevance(question, search_result)
+            logger.info(f"Search validation - Relevance: {search_relevance}, Score: {search_score}")
+            
+            # 검색 결과가 관련성이 없고 재시도 가능한 경우
+            if not search_relevance and retry_count < max_retries:
+                logger.info("Search results not relevant, retrying with different search strategy...")
+                retry_count += 1
+                continue
+            
+            # 검색 결과를 chat history에 추가
+            formatted_history_with_search = formatted_history.copy()
+            formatted_history_with_search.append(f"assistant: [🔍 새로 검색된 참고 문서]\n{search_result}")
 
-                    # 응답 생성
-                    try:
-                        # 프롬프트 포맷팅
-                        formatted_prompt = self.prompt_template.format(
-                            question=question,
-                            chat_history="\n".join(formatted_history_with_search),
-                            agent_scratchpad=""
-                        )
-                        
-                        # LLM 직접 호출
-                        response = self.llm.invoke([{"role": "user", "content": formatted_prompt}])
-                        generated_response = response.content
-                        
-                        # 응답 품질 검증
-                        response_quality, response_score = self.validator.validate_response_quality(
-                            question, search_result, generated_response
-                        )
-                        logger.info(f"Response validation - Quality: {response_quality}, Score: {response_score}")
-                        
-                        # 재시도 여부 결정
-                        should_retry = self.validator.should_retry(
-                            search_relevance, search_score,
-                            response_quality, response_score,
-                            retry_count
-                        )
-                        
-                        if should_retry and retry_count < max_retries:
-                            logger.info("Response quality insufficient, retrying with different search strategy...")
-                            retry_count += 1
-                            continue
-                        else:
-                            # 최종 응답 반환
-                            if not response_quality:
-                                logger.warning("Response quality validation failed, but returning response due to retry limit")
-                                return f"{generated_response}\n\n[참고: 이 응답은 검증 기준을 완전히 충족하지 못할 수 있습니다.]"
-                            else:
-                                return generated_response
-                                
-                    except Exception as e:
-                        logger.error(f"Error in response generation: {e}")
-                        if retry_count < max_retries:
-                            retry_count += 1
-                            continue
-                        else:
-                            return "죄송합니다. 답변 생성 중 오류가 발생했습니다."
-                except Exception as e:
-                    logger.error(f"Error during search: {e}")
-                    if retry_count < max_retries:
-                        retry_count += 1
-                        continue
+            # 응답 생성
+            try:
+                # 프롬프트 포맷팅
+                formatted_prompt = self.prompt_template.format(
+                    question=question,
+                    chat_history="\n".join(formatted_history_with_search),
+                    agent_scratchpad=""
+                )
+                
+                # LLM 직접 호출
+                response = self.llm.invoke([{"role": "user", "content": formatted_prompt}])
+                generated_response = response.content
+                
+                # 응답 품질 검증
+                response_quality, response_score = self.validator.validate_response_quality(
+                    question, search_result, generated_response
+                )
+                logger.info(f"Response validation - Quality: {response_quality}, Score: {response_score}")
+                
+                # 재시도 여부 결정
+                should_retry = self.validator.should_retry(
+                    search_relevance, search_score,
+                    response_quality, response_score,
+                    retry_count
+                )
+                
+                if should_retry and retry_count < max_retries:
+                    logger.info("Response quality insufficient, retrying with different search strategy...")
+                    retry_count += 1
+                    continue
+                else:
+                    # 최종 응답 반환
+                    if not response_quality:
+                        logger.warning("Response quality validation failed, but returning response due to retry limit")
+                        return f"{generated_response}\n\n[참고: 이 응답은 검증 기준을 완전히 충족하지 못할 수 있습니다.]"
                     else:
-                        return "죄송합니다. 검색 중 오류가 발생했습니다."
-            else:
-                logger.warning("RAG tool is not initialized, cannot perform search.")
-                return "죄송합니다. 검색 도구를 사용할 수 없습니다."
+                        return generated_response
+                        
+            except Exception as e:
+                logger.error(f"Error in response generation: {e}")
+                if retry_count < max_retries:
+                    retry_count += 1
+                    continue
+                else:
+                    return "죄송합니다. 답변 생성 중 오류가 발생했습니다."
         
         # 모든 재시도가 실패한 경우
         return "죄송합니다. 적절한 답변을 생성할 수 없습니다. 질문을 다시 한 번 확인해주세요." 
