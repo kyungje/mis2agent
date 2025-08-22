@@ -30,6 +30,7 @@ st.set_page_config(page_title="DocInsight AI", page_icon="📄", layout="wide")
 load_dotenv()
 API_URL = "http://localhost:8000/chat"
 RELOAD_API_URL = "http://localhost:8000/reload-indexes"
+DOCUMENT_API_URL = "http://localhost:8000/get-document"
 
 # === 문서 업로드를 위한 함수들 (chat_ui.py에서 복사) ===
 
@@ -542,10 +543,176 @@ def initialize_session_state():
     if "api_processing" not in st.session_state:
         st.session_state.api_processing = False
 
+
+
+
+def highlight_relevant_content(content: str, search_terms: list) -> str:
+    """문서 내용에서 관련 부분을 하이라이트합니다."""
+    if not search_terms:
+        return content
+    
+    highlighted_content = content
+    
+    # 각 검색어에 대해 하이라이트 적용
+    for term in search_terms:
+        if term and len(term.strip()) > 1:
+            # HTML 하이라이트 적용
+            highlighted_content = re.sub(
+                f'({re.escape(term)})',
+                r'<mark style="background-color: #ffeb3b; padding: 1px 2px;">\1</mark>',
+                highlighted_content,
+                flags=re.IGNORECASE
+            )
+    
+    return highlighted_content
+
+def extract_keywords_from_recent_chat() -> list:
+    """최근 채팅에서 키워드를 추출합니다."""
+    if not st.session_state.messages:
+        return []
+    
+    # 최근 사용자 질문에서 키워드 추출
+    recent_user_messages = [
+        msg["content"] for msg in st.session_state.messages[-5:] 
+        if msg["role"] == "user"
+    ]
+    
+    keywords = []
+    for message in recent_user_messages:
+        # 간단한 키워드 추출 (한글 2글자 이상)
+        words = re.findall(r'[가-힣]{2,}', message)
+        keywords.extend(words)
+    
+    # 중복 제거 및 길이 정렬 (긴 키워드 우선)
+    unique_keywords = list(set(keywords))
+    unique_keywords.sort(key=len, reverse=True)
+    
+    return unique_keywords[:10]  # 상위 10개만 사용
+
+
+
+def extract_document_links(content: str) -> list:
+    """메시지 내용에서 문서 링크를 추출합니다."""
+    pattern = r'\[DOCUMENT:([^\]]+)\]'
+    matches = re.findall(pattern, content)
+    return matches
+
+def find_actual_file_path(docs_dir: Path, filename: str) -> Path:
+    """파일명을 정확히 찾기 위해 다양한 패턴으로 검색합니다."""
+    # 1. 정확한 파일명으로 찾기
+    file_path = docs_dir / filename
+    if file_path.exists():
+        return file_path
+    
+    # 2. 대괄호가 빠진 경우를 고려해서 찾기
+    if not filename.startswith('['):
+        keywords = ['도시가스', '전력', '기타']
+        for keyword in keywords:
+            if keyword in filename:
+                bracketed_filename = f"[{keyword}]{filename}"
+                file_path = docs_dir / bracketed_filename
+                if file_path.exists():
+                    return file_path
+    
+    # 3. 대괄호가 있는 경우, 대괄호를 제거한 형태로도 찾기
+    if filename.startswith('[') and ']' in filename:
+        clean_filename = filename.split(']', 1)[1] if ']' in filename else filename
+        file_path = docs_dir / clean_filename
+        if file_path.exists():
+            return file_path
+    
+    # 4. 정확한 지역명 매칭으로 검색 (개선된 방식)
+    try:
+        # 파일명에서 지역명 추출
+        def extract_region_from_filename(fname):
+            """파일명에서 지역명을 추출합니다."""
+            regions = ['서울특별시', '강원도', '경기도', '경상북도', '전라남도', '충청북도', '부산']
+            for region in regions:
+                if region in fname:
+                    return region
+            return None
+        
+        requested_region = extract_region_from_filename(filename)
+        
+        # 지역명이 있는 경우 정확한 지역 파일만 찾기
+        if requested_region:
+            for file in docs_dir.iterdir():
+                if file.is_file() and requested_region in file.name:
+                    # 추가로 파일 내용이 유사한지 확인
+                    clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                    clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                    
+                    # 파일명의 주요 키워드들이 일치하는지 확인
+                    request_keywords = set(clean_request.split())
+                    file_keywords = set(clean_file.split())
+                    
+                    # 60% 이상 키워드가 일치하면 해당 파일로 선택
+                    if len(request_keywords.intersection(file_keywords)) / len(request_keywords) >= 0.6:
+                        return file
+        
+        # 지역명이 없는 경우 기존 방식으로 폴백
+        else:
+            for file in docs_dir.iterdir():
+                if file.is_file():
+                    clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                    clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                    
+                    if clean_request in clean_file or clean_file in clean_request:
+                        return file
+    except Exception:
+        pass
+    
+    return None
+
+
+
 def display_chat_history():
-    for message in st.session_state.messages:
+    for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                # [DOCUMENT:[filename]] 패턴을 다운로드 가능한 파일명으로 변환
+                content = message["content"]
+                
+                def create_download_link(match):
+                    filename = match.group(1)
+                    # 파일 경로 생성
+                    docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
+                    file_path = find_actual_file_path(docs_dir, filename)
+                    
+                    if file_path and file_path.exists():
+                        # 파일을 읽어서 다운로드 가능한 링크 생성
+                        try:
+                            with open(file_path, "rb") as f:
+                                file_data = f.read()
+                            
+                            # base64로 인코딩하여 다운로드 링크 생성
+                            import base64
+                            b64_data = base64.b64encode(file_data).decode()
+                            file_ext = file_path.suffix.lower()
+                            
+                            # MIME 타입 설정
+                            mime_types = {
+                                '.pdf': 'application/pdf',
+                                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                '.txt': 'text/plain'
+                            }
+                            mime_type = mime_types.get(file_ext, 'application/octet-stream')
+                            
+                            # 다운로드 링크 HTML 생성
+                            href = f'<a href="data:{mime_type};base64,{b64_data}" download="{file_path.name}" style="color: #2d9bf0; text-decoration: underline; font-weight: bold;">📋 {filename}</a>'
+                            return href
+                        except Exception as e:
+                            return f'📋 {filename} (다운로드 오류)'
+                    else:
+                        return f'📋 {filename} (파일 없음)'
+                
+                pattern = r'\[DOCUMENT:([^\]]+)\]'
+                content = re.sub(pattern, create_download_link, content)
+                
+                # 메시지 내용 표시 (HTML 허용)
+                st.markdown(content, unsafe_allow_html=True)
+            else:
+                st.markdown(message["content"])
 
 def stream_response(response_text: str, loading_placeholder):
     message_placeholder = st.empty()

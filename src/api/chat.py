@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 import os
 import logging
+
 from dotenv import load_dotenv
 from src.agent.agent import Agent
 from src.config.logging_config import setup_logging
@@ -69,6 +70,8 @@ class ReloadResponse(BaseModel):
     message: str
     success: bool
 
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """채팅 메시지를 처리하고 응답을 반환합니다."""
@@ -109,6 +112,10 @@ async def reload_indexes():
             message=f"인덱스 리로드 중 오류가 발생했습니다: {str(e)}",
             success=False
         )
+
+
+
+
 
 if __name__ == "__main__":
     import uvicorn
