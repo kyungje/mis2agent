@@ -22,8 +22,18 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document as LCDocument
 from langchain_experimental.text_splitter import SemanticChunker
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import tiktoken  # 실제 토큰 카운트를 위한 라이브러리
 import gc
+
+# === UI 전용 설정 (통합 관리) ===
+# OpenAI 모델 설정
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"  # 임베딩 모델명
+OPENAI_MAX_RETRIES = 3  # API 재시도 횟수
+
+# 임베딩 배치 크기 (API 호출 최적화) - 안정성과 효율성의 균형
+EMBEDDING_BATCH_SIZE_INITIAL = 500     # 1차 시도 (적정 처리)
+EMBEDDING_BATCH_SIZE_RETRY = 200       # 2차 시도 (안전)
+EMBEDDING_BATCH_SIZE_FINAL = 100       # 3차 시도 (매우 안전)
 
 # 페이지 설정
 st.set_page_config(page_title="DocInsight AI", page_icon="📄", layout="wide")
@@ -50,40 +60,319 @@ GAS_INDEX_DIR.mkdir(exist_ok=True)
 POWER_INDEX_DIR.mkdir(exist_ok=True)
 OTHER_INDEX_DIR.mkdir(exist_ok=True)
 
+# 토큰 분할 처리를 위한 함수들
+def get_token_encoding():
+    """OpenAI 임베딩 모델에 맞는 토큰 인코딩을 반환합니다."""
+    try:
+        # text-embedding-3-small 모델에 맞는 인코딩 (cl100k_base)
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        st.warning(f"tiktoken 인코딩 로드 실패: {e}. 추정 방식을 사용합니다.")
+        return None
+
+def count_actual_tokens(text: str) -> int:
+    """실제 토큰 수를 정확히 계산합니다."""
+    encoding = get_token_encoding()
+    if encoding:
+        try:
+            return len(encoding.encode(text))
+        except Exception as e:
+            st.warning(f"토큰 카운트 실패: {e}. 추정 방식을 사용합니다.")
+            # 폴백: 추정 방식
+            return int(len(text) * 0.4)
+    else:
+        # 폴백: 추정 방식
+        return int(len(text) * 0.4)
+
+def calculate_total_tokens(documents: list) -> int:
+    """문서 리스트의 실제 총 토큰 수를 계산합니다."""
+    total_text = "".join([doc.page_content for doc in documents])
+    return count_actual_tokens(total_text)
+
+def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=280000):  # 28만 토큰으로 증가 (OpenAI 제한의 93%)
+    """실제 토큰 수 기준으로 벡터스토어를 생성합니다."""
+    st.info(f"🔍 create_vectorstore_with_token_limit 함수가 호출되었습니다.")
+    st.info(f"📄 입력 문서 수: {len(documents)}개")
+    
+    # 실제 토큰 계산 전에 로그
+    st.info(f"🔢 실제 토큰 수를 계산 중...")
+    total_tokens = calculate_total_tokens(documents)
+    st.info(f"📊 문서 수: {len(documents)}개, 실제 토큰: {total_tokens:,}, 제한: {max_tokens:,}")
+    
+    # 🚨 디버그 로그 추가
+    st.error(f"🚨 DEBUG: total_tokens = {total_tokens}")
+    st.error(f"🚨 DEBUG: max_tokens = {max_tokens}")
+    st.error(f"🚨 DEBUG: total_tokens > max_tokens = {total_tokens > max_tokens}")
+    
+    # 250,000 토큰 제한에 맞춰 분할 처리 여부 결정
+    if total_tokens > max_tokens:
+        st.warning(f"⚠️ 토큰 제한 초과 감지! {total_tokens:,} > {max_tokens:,}")
+        st.info(f"📦 토큰 제한({max_tokens:,}) 초과. 정확한 배치 처리를 시작합니다.")
+        
+        # 안전한 배치 크기 (실제 토큰 기준) - 토큰 활용률 극대화
+        safe_max_tokens = 240000  # 24만 토큰으로 증가 (OpenAI 제한의 80%)
+        
+        vectorstore = None
+        current_batch = []
+        current_tokens = 0
+        batch_num = 1
+        
+        st.info(f"🔄 {len(documents)}개 문서를 {safe_max_tokens:,} 토큰씩 배치로 분할합니다.")
+        
+        for i, doc in enumerate(documents):
+            doc_tokens = count_actual_tokens(doc.page_content)
+            
+            # 단일 문서가 배치 크기를 크게 초과하는 경우에만 경고 및 건너뛰기 (50% 여유를 두어 중요한 문서 손실 방지)
+            if doc_tokens > safe_max_tokens * 1.5:  # 현재는 30만 토큰(200,000 * 1.5)
+                st.warning(f"⚠️ 문서 {i+1}이 배치 크기의 150%({safe_max_tokens * 1.5:,.0f} 토큰)를 초과합니다 ({doc_tokens:,} 토큰). 건너뜁니다.")
+                continue
+            
+            # 진행상황 표시 (10개마다)
+            if (i + 1) % 10 == 0:
+                st.info(f"📝 문서 처리 진행: {i+1}/{len(documents)} (현재 배치 토큰: {current_tokens:,})")
+            
+            # 현재 배치에 추가해도 안전한지 확인
+            if current_tokens + doc_tokens <= safe_max_tokens:
+                current_batch.append(doc)
+                current_tokens += doc_tokens
+            else:
+                # 현재 배치 처리
+                if current_batch:
+                    st.info(f"📦 배치 {batch_num}: {len(current_batch)}개 문서, {current_tokens:,} 실제 토큰")
+                    
+                    try:
+                        if vectorstore is None:
+                            st.info(f"🏗️ 첫 번째 배치로 벡터스토어를 초기화합니다.")
+                            vectorstore = FAISS.from_documents(current_batch, embedding_model)
+                        else:
+                            st.info(f"🔗 기존 벡터스토어에 배치를 병합합니다.")
+                            batch_vectorstore = FAISS.from_documents(current_batch, embedding_model)
+                            vectorstore.merge_from(batch_vectorstore)
+                        
+                        st.success(f"✅ 배치 {batch_num} 완료")
+                        batch_num += 1
+                        
+                    except Exception as e:
+                        st.error(f"❌ 배치 {batch_num} 처리 실패: {e}")
+                        
+                        # 더 작은 배치로 재시도
+                        if len(current_batch) > 1:
+                            st.info(f"🔄 배치를 절반으로 나누어 재시도합니다.")
+                            
+                            # 배치를 절반으로 나누어 재시도
+                            mid = len(current_batch) // 2
+                            for sub_batch in [current_batch[:mid], current_batch[mid:]]:
+                                if sub_batch:
+                                    sub_tokens = sum(count_actual_tokens(d.page_content) for d in sub_batch)
+                                    st.info(f"    🔹 소배치: {len(sub_batch)}개 문서, {sub_tokens:,} 실제 토큰")
+                                    try:
+                                        if vectorstore is None:
+                                            vectorstore = FAISS.from_documents(sub_batch, embedding_model)
+                                        else:
+                                            batch_vectorstore = FAISS.from_documents(sub_batch, embedding_model)
+                                            vectorstore.merge_from(batch_vectorstore)
+                                        st.success(f"    ✅ 소배치 완료: {len(sub_batch)}개 문서")
+                                    except Exception as e2:
+                                        st.error(f"    ❌ 소배치도 실패: {e2}")
+                                        continue
+                        else:
+                            # 단일 문서도 실패하는 경우 건너뛰기
+                            st.warning(f"⚠️ 단일 문서 처리 실패, 건너뜁니다: {e}")
+                
+                # 새 배치 시작
+                current_batch = [doc]
+                current_tokens = doc_tokens
+        
+        # 마지막 배치 처리
+        if current_batch:
+            st.info(f"📦 배치 {batch_num}: {len(current_batch)}개 문서, {current_tokens:,} 실제 토큰")
+            
+            try:
+                if vectorstore is None:
+                    vectorstore = FAISS.from_documents(current_batch, embedding_model)
+                else:
+                    batch_vectorstore = FAISS.from_documents(current_batch, embedding_model)
+                    vectorstore.merge_from(batch_vectorstore)
+                
+                st.success(f"✅ 배치 {batch_num} 완료")
+                
+            except Exception as e:
+                st.error(f"❌ 마지막 배치 처리 실패: {e}")
+                
+                # 마지막 배치도 분할 시도
+                if len(current_batch) > 1:
+                    mid = len(current_batch) // 2
+                    for sub_batch in [current_batch[:mid], current_batch[mid:]]:
+                        if sub_batch:
+                            try:
+                                if vectorstore is None:
+                                    vectorstore = FAISS.from_documents(sub_batch, embedding_model)
+                                else:
+                                    batch_vectorstore = FAISS.from_documents(sub_batch, embedding_model)
+                                    vectorstore.merge_from(batch_vectorstore)
+                                st.success(f"✅ 마지막 소배치 완료: {len(sub_batch)}개 문서")
+                            except:
+                                continue
+        
+        if vectorstore is None:
+            raise Exception("모든 문서 처리에 실패했습니다.")
+        
+        st.success(f"🎉 모든 배치 처리 완료!")
+        return vectorstore
+    
+    else:
+        # 토큰 제한 내에 있으면 직접 처리
+        st.info(f"✅ 토큰 제한({max_tokens:,}) 내에서 직접 처리합니다.")
+        try:
+            st.info(f"🏗️ FAISS.from_documents를 직접 호출합니다.")
+            return FAISS.from_documents(documents, embedding_model)
+        except Exception as e:
+            st.error(f"❌ 직접 처리 실패: {e}")
+            if "max_tokens_per_request" in str(e):
+                st.warning(f"⚠️ 실제 토큰이 {total_tokens:,}인데도 토큰 제한 오류 발생. 강제 분할 처리합니다.")
+                # 강제 분할 처리로 재귀 호출 - 적당한 토큰 제한 적용
+                return create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=150000)
+            else:
+                raise e
+
 # OpenAI 임베딩 모델 초기화
 def create_embedding_model():
-    """동적으로 배치 크기를 조정하여 임베딩 모델을 생성합니다."""
-    chunk_size = 1000
+    """OpenAI 임베딩 모델을 생성합니다.
+    
+    토큰 제한 오류 시 배치 크기를 단계적으로 줄여가며 재시도합니다.
+    - 1차: 1000개 배치 (빠른 처리)
+    - 2차: 500개 배치 (안전)
+    """
     
     try:
         embedding_model = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            chunk_size=chunk_size,
-            max_retries=3
+            model=OPENAI_EMBEDDING_MODEL,
+            chunk_size=EMBEDDING_BATCH_SIZE_INITIAL,
+            max_retries=OPENAI_MAX_RETRIES
         )
         return embedding_model
     except Exception as e:
         if "max_tokens_per_request" in str(e):
-            chunk_size = 500
-            st.info(f"토큰 제한으로 인해 배치 크기를 {chunk_size}로 조정합니다.")
+            st.info(f"토큰 제한으로 인해 배치 크기를 {EMBEDDING_BATCH_SIZE_RETRY}로 조정합니다.")
             return OpenAIEmbeddings(
-                model="text-embedding-3-small",
-                chunk_size=chunk_size,
-                max_retries=3
+                model=OPENAI_EMBEDDING_MODEL,
+                chunk_size=EMBEDDING_BATCH_SIZE_RETRY,
+                max_retries=OPENAI_MAX_RETRIES
             )
         else:
             raise e
 
-# 텍스트 분할기 초기화 - SemanticChunker 사용
+# 텍스트 분할기 초기화 - 하이브리드 방식 (사전 분할 + SemanticChunker)
 def create_text_splitter():
-    """SemanticChunker를 생성합니다."""
-    embedding_model = create_embedding_model()
-    text_splitter = SemanticChunker(
-      embeddings=embedding_model,
-      breakpoint_threshold_type="percentile",
-      buffer_size=2
-  )
-    return text_splitter
+    """하이브리드 텍스트 분할기를 생성합니다.
+    
+    1단계: RecursiveCharacterTextSplitter로 큰 청크들로 사전 분할
+    2단계: 각 청크에 SemanticChunker 적용하여 의미적 분할
+    """
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_experimental.text_splitter import SemanticChunker
+    
+    # 1단계: 사전 분할기 (큰 청크로 나누기) - 법령 문서 최적화
+    pre_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=35000,  # 35,000자로 증가 (더 큰 문맥에서 의미 분석)
+        chunk_overlap=100, # 100자로 최소화 (조문 연결부만 보존)
+        length_function=len,
+        separators=[
+            "\n\n제", "\n\n조", "\n\n항", "\n\n호",  # 법령 구조 우선 (제/조/항/호)
+            "\n\n\n\n", "\n\n\n", "\n\n", "\n",      # 일반 구조
+            ".", ")", " ", ""                          # 최후 수단
+        ]
+    )
+    
+    return pre_splitter  # 우선 사전 분할기만 반환
+
+def apply_semantic_chunking(text_chunk: str, embedding_model) -> list:
+    """개별 텍스트 청크에 SemanticChunker를 적용합니다."""
+    try:
+        # 텍스트가 너무 짧으면 SemanticChunker 건너뛰기 (더 큰 사전 청크에 맞게 조정)
+        if len(text_chunk) < 2000:
+            return [text_chunk]
+        
+        st.error(f"🔍 SemanticChunker 적용 시작 - 청크 길이: {len(text_chunk):,}자")
+        
+        # SemanticChunker 생성 및 적용
+        semantic_splitter = SemanticChunker(
+            embeddings=embedding_model,
+            breakpoint_threshold_type="percentile",  # 다른 옵션: "standard_deviation", "interquartile"
+            breakpoint_threshold_amount=90,  # 더욱 큰 의미 단위로 분할 (90%)
+            buffer_size=2,  # 더 큰 청크에서는 버퍼 크기 증가로 정교한 분석
+            sentence_split_regex=r'(?<=[.!?])\s+',  # 문장 분할 정규식 명시
+            add_start_index=True  # 원본 텍스트에서의 시작 위치 추가
+        )
+        
+        # 의미적 분할 수행
+        semantic_chunks = semantic_splitter.split_text(text_chunk)
+        st.error(f"✅ SemanticChunker 완료 - {len(semantic_chunks)}개 의미적 청크 생성")
+        
+        # 빈 청크 제거 및 최소 길이 필터링 (더욱 관대한 기준으로 조정)
+        filtered_chunks = [chunk for chunk in semantic_chunks if len(chunk.strip()) >= 100]
+        
+        return filtered_chunks if filtered_chunks else [text_chunk]
+        
+    except Exception as e:
+        # SemanticChunker 실패 시 고정 크기 분할로 폴백
+        st.warning(f"SemanticChunker 실패, 고정 크기 분할로 폴백: {e}")
+        fallback_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=8000,   # 적절한 중간 크기 (25,000의 1/3 정도)
+            chunk_overlap=100, # 1단계와 동일한 겹침
+            length_function=len,
+            separators=[
+                "\n\n제", "\n\n조", "\n\n항", "\n\n호",  # 법령 구조 유지
+                "\n\n\n", "\n\n", "\n", ".", " ", ""
+            ]
+        )
+        return fallback_splitter.split_text(text_chunk)
+
+def remove_duplicate_chunks(chunks: list) -> list:
+    """중복되거나 매우 유사한 청크를 제거합니다. (법령 문서 최적화)"""
+    if not chunks:
+        return chunks
+    
+    st.error(f"🔍 중복 청크 제거 시작 - 입력: {len(chunks)}개 청크")
+    
+    # 법령 문서에서는 더 엄격한 중복 기준 적용 (65% 이상 유사하면 중복)
+    similarity_threshold = 0.65
+    unique_chunks = []
+    
+    for i, chunk in enumerate(chunks):
+        is_duplicate = False
+        chunk_text = chunk.strip()
+        
+        # 너무 짧은 청크는 제외
+        if len(chunk_text) < 100:
+            continue
+            
+        chunk_words = set(chunk_text.split())
+        
+        # 이미 추가된 청크들과 비교
+        for j, existing_chunk in enumerate(unique_chunks):
+            existing_text = existing_chunk.strip()
+            existing_words = set(existing_text.split())
+            
+            # 두 청크 모두 충분한 길이인 경우에만 비교
+            if len(chunk_words) > 10 and len(existing_words) > 10:
+                # Jaccard 유사도 계산 (더 정확)
+                intersection = len(chunk_words.intersection(existing_words))
+                union = len(chunk_words.union(existing_words))
+                jaccard_similarity = intersection / union if union > 0 else 0
+                
+                if jaccard_similarity >= similarity_threshold:
+                    is_duplicate = True
+                    st.error(f"🚨 중복 감지: 청크 {i+1} vs 기존 청크 {j+1} (유사도: {jaccard_similarity:.2f})")
+                    break
+        
+        if not is_duplicate:
+            unique_chunks.append(chunk)
+    
+    removed_count = len(chunks) - len(unique_chunks)
+    st.error(f"✅ 중복 청크 제거 완료 - 제거: {removed_count}개, 남은 청크: {len(unique_chunks)}개")
+    
+    return unique_chunks
 
 # 문서 읽기 함수들
 def read_docx(path):
@@ -265,8 +554,12 @@ def extract_metadata_from_filename(filename):
 
 # 문서 처리 및 청킹
 def process_document(file_path):
-    """문서를 읽고 SemanticChunker를 사용하여 청킹합니다."""
+    """문서를 읽고 SemanticChunker를 사용하여 의미적 청킹을 수행합니다.
+    
+    SemanticChunker는 문서의 의미를 고려하여 자동으로 적절한 크기의 청크로 분할합니다.
+    """
     filename = os.path.basename(file_path)
+    st.error(f"🚨 DEBUG: process_document 시작 - {filename}")
     
     # 문서 읽기
     if file_path.endswith(".pdf"):
@@ -276,26 +569,99 @@ def process_document(file_path):
     elif file_path.endswith(".txt"):
         text = read_txt(file_path)
     else:
+        st.error(f"🚨 DEBUG: 지원되지 않는 파일 형식 - {filename}")
         return []
+    
+    st.error(f"🚨 DEBUG: 텍스트 추출 완료 - 길이: {len(text) if text else 0}자")
     
     # 텍스트가 비어있으면 처리 중단
     if not text:
         st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
+        st.error(f"🚨 DEBUG: 텍스트 없음으로 종료")
         return []
     
     # 텍스트 정규화
     original_text = text
     text = normalize_text(text)
+    st.error(f"🚨 DEBUG: 정규화 완료 - 원본: {len(original_text)}자 → 정규화: {len(text)}자")
     
     # 정규화 과정에서 텍스트가 너무 많이 제거되었는지 확인
     if len(text) < len(original_text) * 0.1:  # 90% 이상 제거된 경우
         st.warning(f"  ⚠️ 텍스트가 너무 많이 제거되었습니다. 원본: {len(original_text)}자 → 정규화: {len(text)}자")
         # 정규화를 건너뛰고 원본 텍스트 사용
         text = original_text
+        st.error(f"🚨 DEBUG: 원본 텍스트로 복구")
     
-    # SemanticChunker 사용
-    text_splitter = create_text_splitter()
-    chunks = text_splitter.split_text(text)
+    # 적응적 청킹 전략: 문서 크기에 따라 처리 방식 결정
+    st.error(f"🚨 DEBUG: 적응적 청킹 전략 시작 - 문서 길이: {len(text):,}자")
+    
+    # 문서 크기 기준 설정
+    LARGE_DOCUMENT_THRESHOLD = 60000  # 6만자 이상은 대용량 문서로 판단
+    
+    if len(text) <= LARGE_DOCUMENT_THRESHOLD:
+        # 작은 문서: SemanticChunker 직접 사용
+        st.error(f"🚨 DEBUG: 소형 문서 감지 - SemanticChunker 직접 적용")
+        embedding_model = create_embedding_model()
+        
+        try:
+            chunks = apply_semantic_chunking(text, embedding_model)
+            st.error(f"🚨 DEBUG: 소형 문서 SemanticChunker 완료 - {len(chunks)}개 청크 생성")
+        except Exception as e:
+            st.error(f"🚨 DEBUG: 소형 문서 SemanticChunker 실패: {e}")
+            # 실패 시 간단한 고정 크기 분할
+            simple_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=3000,
+                chunk_overlap=100,
+                length_function=len,
+                separators=[
+                    "\n\n제", "\n\n조", "\n\n항", "\n\n호",  # 법령 구조 유지
+                    "\n\n\n", "\n\n", "\n", ".", " ", ""
+                ]
+            )
+            chunks = simple_splitter.split_text(text)
+            st.error(f"🚨 DEBUG: 소형 문서 폴백 완료 - {len(chunks)}개 청크 생성")
+            
+    else:
+        # 대용량 문서: 하이브리드 방식 (사전 분할 + SemanticChunker)
+        st.error(f"🚨 DEBUG: 대형 문서 감지 - 하이브리드 청킹 적용")
+        text_splitter = create_text_splitter()
+        pre_chunks = text_splitter.split_text(text)
+        st.error(f"🚨 DEBUG: 1단계 완료 - {len(pre_chunks)}개 사전 청크 생성")
+        
+        # 2단계: 각 사전 청크에 SemanticChunker 적용
+        st.error(f"🚨 DEBUG: 2단계 시작 - SemanticChunker 적용")
+        all_chunks = []
+        embedding_model = create_embedding_model()  # SemanticChunker용 임베딩 모델
+        
+        for i, pre_chunk in enumerate(pre_chunks):
+            st.error(f"🚨 DEBUG: 사전 청크 {i+1}/{len(pre_chunks)} 처리 중... (길이: {len(pre_chunk)}자)")
+            try:
+                semantic_chunks = apply_semantic_chunking(pre_chunk, embedding_model)
+                all_chunks.extend(semantic_chunks)
+                st.error(f"🚨 DEBUG: 사전 청크 {i+1} 완료 - {len(semantic_chunks)}개 의미적 청크 생성")
+            except Exception as e:
+                st.error(f"🚨 DEBUG: 사전 청크 {i+1} SemanticChunker 실패: {e}")
+                # 실패 시 원본 사전 청크를 더 작게 나누어 추가
+                fallback_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=8000,   # apply_semantic_chunking과 동일한 설정
+                    chunk_overlap=100, # 1단계와 동일한 겹침
+                    length_function=len,
+                    separators=[
+                        "\n\n제", "\n\n조", "\n\n항", "\n\n호",  # 법령 구조 유지
+                        "\n\n\n", "\n\n", "\n", ".", " ", ""
+                    ]
+                )
+                fallback_chunks = fallback_splitter.split_text(pre_chunk)
+                all_chunks.extend(fallback_chunks)
+                st.error(f"🚨 DEBUG: 폴백 처리로 {len(fallback_chunks)}개 청크 생성")
+        
+        chunks = all_chunks
+        st.error(f"🚨 DEBUG: 하이브리드 청킹 완료 - 총 {len(chunks)}개 최종 청크 생성")
+    
+    # 3단계: 중복 청크 제거 (법령 문서 정확성 확보)
+    st.error(f"🚨 DEBUG: 3단계 시작 - 중복 청크 제거")
+    chunks = remove_duplicate_chunks(chunks)
+    st.error(f"🚨 DEBUG: 3단계 완료 - 중복 제거 후 {len(chunks)}개 청크")
     
     # 파일명에서 추가 메타데이터 추출
     additional_metadata = extract_metadata_from_filename(filename)
@@ -303,7 +669,7 @@ def process_document(file_path):
     # 메타데이터가 포함된 LangChain 문서로 변환
     documents = []
     for i, chunk in enumerate(chunks):
-        if len(chunk.strip()) > 50:  # 최소 길이 필터 (50자 이상)
+        if len(chunk.strip()) > 100:  # 최소 길이 필터 (100자 이상)
             # 기본 메타데이터와 추가 메타데이터를 결합
             metadata = {
                 "source": filename,
@@ -320,11 +686,16 @@ def process_document(file_path):
             )
             documents.append(doc)
     
+    st.error(f"🚨 DEBUG: 최종 문서 변환 완료 - {len(documents)}개 Document 객체 생성")
     return documents
 
 # 벡터 인덱스 구축
 def build_vector_index_from_uploaded_files(uploaded_files):
     """업로드된 파일들로부터 벡터 인덱스를 구축합니다."""
+    st.error("🔥🔥🔥 build_vector_index_from_uploaded_files 함수 시작!!! 🔥🔥🔥")
+    st.error(f"🔥 현재 실행 중인 파일: src/ui/chat_ui_new.py")
+    st.error(f"🔥 업로드된 파일 수: {len(uploaded_files) if uploaded_files else 0}")
+    
     if not uploaded_files:
         st.warning("업로드된 파일이 없습니다.")
         return False
@@ -368,18 +739,25 @@ def build_vector_index_from_uploaded_files(uploaded_files):
             f.write(uploaded_file.getvalue())
         
         try:
+            st.error(f"🔥 파일 분류 시작: {uploaded_file.name}")
             # 파일 분류
             category = classify_file(uploaded_file.name)
+            st.error(f"🔥 파일 분류 완료: {category}")
             
+            st.error(f"🔥 문서 처리 시작: {uploaded_file.name}")
             documents = process_document(str(file_path))
+            st.error(f"🔥 문서 처리 완료: {len(documents)}개 청크 생성")
             
             # 분류별로 문서 추가
             if category == 'gas':
                 gas_documents.extend(documents)
+                st.error(f"🔥 Gas 문서에 추가: 총 {len(gas_documents)}개")
             elif category == 'power':
                 power_documents.extend(documents)
+                st.error(f"🔥 Power 문서에 추가: 총 {len(power_documents)}개")
             else:
                 other_documents.extend(documents)
+                st.error(f"🔥 Other 문서에 추가: 총 {len(other_documents)}개")
             
             # 메모리 최적화
             del documents
@@ -406,31 +784,37 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     
     success_count = 0
     for category, documents, category_name in categories:
+        st.error(f"🚨 DEBUG: {category_name} 카테고리 - 문서 수: {len(documents)}개")
         if len(documents) == 0:
+            st.error(f"🚨 DEBUG: {category_name} 카테고리 건너뜀 (문서 없음)")
             continue
             
         index_status_placeholder.info(f"🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
         
         # 배치 단위로 임베딩 처리
+        st.error(f"🚨 DEBUG: build_vector_index_from_uploaded_files에서 create_vectorstore_with_token_limit 호출 직전")
+        st.error(f"🚨 DEBUG: 문서 수: {len(documents)}, 임베딩 모델: {type(embedding_model)}")
         try:
-            vectorstore = FAISS.from_documents(documents, embedding_model)
+            vectorstore = create_vectorstore_with_token_limit(documents, embedding_model)
+            st.error(f"🚨 DEBUG: create_vectorstore_with_token_limit 호출 완료")
         except Exception as e:
+            st.error(f"🚨 DEBUG: create_vectorstore_with_token_limit에서 예외 발생: {e}")
             if "max_tokens_per_request" in str(e):
                 try:
                     medium_embedding_model = OpenAIEmbeddings(
-                        model="text-embedding-3-small",
-                        chunk_size=500,
-                        max_retries=3
+                        model=OPENAI_EMBEDDING_MODEL,
+                        chunk_size=EMBEDDING_BATCH_SIZE_RETRY,
+                        max_retries=OPENAI_MAX_RETRIES
                     )
-                    vectorstore = FAISS.from_documents(documents, medium_embedding_model)
+                    vectorstore = create_vectorstore_with_token_limit(documents, medium_embedding_model)
                 except Exception as e2:
                     if "max_tokens_per_request" in str(e2):
                         small_embedding_model = OpenAIEmbeddings(
-                            model="text-embedding-3-small",
-                            chunk_size=100,
-                            max_retries=3
+                            model=OPENAI_EMBEDDING_MODEL,
+                            chunk_size=EMBEDDING_BATCH_SIZE_FINAL,
+                            max_retries=OPENAI_MAX_RETRIES
                         )
-                        vectorstore = FAISS.from_documents(documents, small_embedding_model)
+                        vectorstore = create_vectorstore_with_token_limit(documents, small_embedding_model)
                     else:
                         raise e2
             else:
@@ -675,8 +1059,8 @@ def display_chat_history():
                 
                 def create_download_link(match):
                     filename = match.group(1)
-                    # 파일 경로 생성
-                    docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
+                    # 파일 경로 생성 (업로드 경로와 일치하도록 수정)
+                    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
                     file_path = find_actual_file_path(docs_dir, filename)
                     
                     if file_path and file_path.exists():
@@ -702,11 +1086,11 @@ def display_chat_history():
                             href = f'<a href="data:{mime_type};base64,{b64_data}" download="{file_path.name}" style="color: #2d9bf0; text-decoration: underline; font-weight: bold;">📋 {filename}</a>'
                             return href
                         except Exception as e:
-                            return f'📋 {filename} (다운로드 오류)'
+                            return f'📥 다운로드 (오류)'
                     else:
-                        return f'📋 {filename} (파일 없음)'
+                        return f'📥 다운로드 (파일 없음)'
                 
-                pattern = r'\[DOCUMENT:([^\]]+)\]'
+                pattern = r'\[DOCUMENT:(.*)\]'
                 content = re.sub(pattern, create_download_link, content)
                 
                 # 메시지 내용 표시 (HTML 허용)
@@ -883,9 +1267,12 @@ def show_upload_page():
         st.table(df)
  
     if st.button("▶️ AI 문서 학습 시작", type="primary", disabled=not uploaded_files):
+        st.error("🚨🚨🚨 AI 문서 학습 시작 버튼이 클릭되었습니다!!! 🚨🚨🚨")
         try:
             with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
+                st.error("🔥 build_vector_index_from_uploaded_files 함수를 호출합니다!")
                 success = build_vector_index_from_uploaded_files(uploaded_files)
+                st.error(f"🔥 build_vector_index_from_uploaded_files 함수 완료! 결과: {success}")
                 if success:
                     st.success("✅ 인덱스 생성이 완료되었습니다!")
                     
