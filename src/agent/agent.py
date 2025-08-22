@@ -296,27 +296,25 @@ reason: "압력"이라는 단어가 도시가스 압력일 수도 있고 전기 
     def _generate_clarification_response(self, question: str, possible_agents: List[str], reason: str) -> str:
         """애매한 질문에 대해 구체적인 정보를 요청하는 응답을 생성합니다."""
         
-        # 에이전트별 설명 매핑
-        agent_descriptions = {
+        # 영역별 설명 매핑 (내부 agent 이름 숨김)
+        domain_descriptions = {
             'legal_agent': '🏛️ **도시가스 관련**: 서울특별시 도시가스회사의 공급규정, 가스 요금, 가스 압력 기준, 가스 안전 관련',
             'power_agent': '⚡ **전력 관련**: 한국전력의 전기 요금, 전압 기준, 전력 설비, 전기사업법 관련',
             'general_agent': '💬 **일반 질문**: 위 두 영역에 해당하지 않는 일반적인 질문'
         }
         
-        clarification_text = f"""🤔 **질문이 다소 애매합니다!**
+        clarification_text = f"""🤔 **질문을 좀 더 구체적으로 해주세요!**
 
 **질문**: "{question}"
 
-**분석 결과**: {reason}
-
-다음 중 어떤 영역에 대한 질문인지 좀 더 구체적으로 말씀해주시겠어요?
+다음 중 어떤 영역에 대한 질문인지 명시해주시면 더 정확한 답변을 드릴 수 있습니다:
 
 """
         
-        # 가능한 에이전트들에 대한 설명 추가
+        # 가능한 영역들에 대한 설명 추가 (agent 이름 노출 안 함)
         for agent in possible_agents:
-            if agent in agent_descriptions:
-                clarification_text += f"{agent_descriptions[agent]}\n\n"
+            if agent in domain_descriptions:
+                clarification_text += f"{domain_descriptions[agent]}\n\n"
         
         clarification_text += """**💡 예시**:
 - "도시가스 압력 기준은?" → 도시가스 관련

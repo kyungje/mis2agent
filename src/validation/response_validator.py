@@ -241,7 +241,7 @@ class ResponseValidator:
             logger.info("Comparison strategy used - no retry regardless of quality")
             return False
         
-        # 더 관대한 기준 적용 (성능 향상을 위해)
+        # 관대한 기준 적용 (성능 향상을 위해)
         # 검색 결과가 완전히 관련성이 없는 경우만 재시도
         if not search_relevance and search_score < 0.3:
             return True
@@ -250,7 +250,7 @@ class ResponseValidator:
         if not response_quality and response_score < 0.4:
             return True
         
-        return False 
+        return False
     
     def _quick_relevance_check(self, query: str, search_results: str) -> Tuple[bool, float]:
         """
