@@ -22,6 +22,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document as LCDocument
 from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import gc
 
 # 페이지 설정
@@ -77,10 +78,10 @@ def create_text_splitter():
     """SemanticChunker를 생성합니다."""
     embedding_model = create_embedding_model()
     text_splitter = SemanticChunker(
-        embeddings=embedding_model,
-        breakpoint_threshold_type="percentile",  # 기본값
-        buffer_size=2
-    )
+      embeddings=embedding_model,
+      breakpoint_threshold_type="percentile",
+      buffer_size=2
+  )
     return text_splitter
 
 # 문서 읽기 함수들

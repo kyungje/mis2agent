@@ -247,7 +247,7 @@ class ResponseValidator:
             return True
         
         # 응답 품질이 매우 낮은 경우만 재시도
-        if not response_quality and response_score < 0.4:
+        if not response_quality and response_score < 0.3:
             return True
         
         return False 
