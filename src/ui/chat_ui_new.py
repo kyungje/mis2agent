@@ -15,6 +15,101 @@ import shutil
 from pathlib import Path
 import unicodedata
 
+# 통합 로그 관리 클래스
+class UnifiedLogger:
+    """한 영역에서 로그를 관리하는 클래스"""
+    def __init__(self):
+        self.main_container = None
+        self.detail_container = None
+        self.is_active = False
+    
+    def start(self, title="진행 상황"):
+        """로깅 시작"""
+        if not self.is_active:
+            self.main_container = st.empty()
+            self.detail_container = st.empty()
+            self.is_active = True
+        self.update_main(title, "시작", "🚀")
+    
+    def update_main(self, message, status="진행중", icon="📝"):
+        """메인 상태 업데이트"""
+        if self.main_container:
+            status_color = {
+                "시작": "#3b82f6",
+                "진행중": "#f59e0b", 
+                "완료": "#10b981",
+                "실패": "#ef4444"
+            }.get(status, "#6b7280")
+            
+            self.main_container.markdown(f"""
+                <div style="background-color: rgba(59, 130, 246, 0.1); padding: 1rem; border-radius: 8px; border-left: 4px solid {status_color}; margin-bottom: 1rem;">
+                    <div style="display: flex; align-items: center; font-weight: bold; color: {status_color};">
+                        <span style="margin-right: 8px; font-size: 1.2rem;">{icon}</span>
+                        <span>{message}</span>
+                        <span style="margin-left: auto; font-size: 0.9rem;">({status})</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+    
+    def update_detail(self, message, type="info"):
+        """세부 진행상황 업데이트"""
+        if self.detail_container:
+            colors = {
+                "info": "#3b82f6",
+                "success": "#10b981", 
+                "warning": "#f59e0b",
+                "error": "#ef4444"
+            }
+            icons = {
+                "info": "ℹ️",
+                "success": "✅",
+                "warning": "⚠️", 
+                "error": "❌"
+            }
+            
+            color = colors.get(type, "#6b7280")
+            icon = icons.get(type, "📝")
+            
+            self.detail_container.markdown(f"""
+                <div style="background-color: rgba(107, 114, 128, 0.05); padding: 0.75rem; border-radius: 6px; border-left: 3px solid {color}; margin-bottom: 0.5rem;">
+                    <div style="display: flex; align-items: center; color: {color}; font-size: 0.9rem;">
+                        <span style="margin-right: 6px;">{icon}</span>
+                        <span>{message}</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+    
+    def success(self, message):
+        """성공 메시지"""
+        self.update_main(message, "완료", "🎉")
+        if self.detail_container:
+            self.detail_container.empty()
+    
+    def error(self, message):
+        """에러 메시지"""
+        self.update_main(message, "실패", "❌")
+        if self.detail_container:
+            self.detail_container.empty()
+    
+    def finish(self, success_message=None, error_message=None):
+        """로깅 종료"""
+        if success_message:
+            self.success(success_message)
+        elif error_message:
+            self.error(error_message)
+        
+        if self.detail_container:
+            self.detail_container.empty()
+        self.is_active = False
+    
+    def clear(self):
+        """모든 메시지 정리"""
+        if self.main_container:
+            self.main_container.empty()
+        if self.detail_container:
+            self.detail_container.empty()
+        self.is_active = False
+
 # 문서 처리 및 벡터 인덱스 생성을 위한 모듈들
 import pdfplumber
 from docx import Document
@@ -67,7 +162,7 @@ def get_token_encoding():
         # text-embedding-3-small 모델에 맞는 인코딩 (cl100k_base)
         return tiktoken.get_encoding("cl100k_base")
     except Exception as e:
-        st.warning(f"tiktoken 인코딩 로드 실패: {e}. 추정 방식을 사용합니다.")
+        # 로그 출력 제거 - 이미 상위 함수에서 처리됨
         return None
 
 def count_actual_tokens(text: str) -> int:
@@ -77,7 +172,7 @@ def count_actual_tokens(text: str) -> int:
         try:
             return len(encoding.encode(text))
         except Exception as e:
-            st.warning(f"토큰 카운트 실패: {e}. 추정 방식을 사용합니다.")
+            # 로그 출력 제거 - 이미 상위 함수에서 처리됨
             # 폴백: 추정 방식
             return int(len(text) * 0.4)
     else:
@@ -89,16 +184,16 @@ def calculate_total_tokens(documents: list) -> int:
     total_text = "".join([doc.page_content for doc in documents])
     return count_actual_tokens(total_text)
 
-def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=280000):  # 28만 토큰으로 증가 (OpenAI 제한의 93%)
+def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=280000, logger=None):  # 28만 토큰으로 증가 (OpenAI 제한의 93%)
     """실제 토큰 수 기준으로 벡터스토어를 생성합니다."""
     
     # 실제 토큰 계산 전에 로그
     total_tokens = calculate_total_tokens(documents)
     
-  
     # 250,000 토큰 제한에 맞춰 분할 처리 여부 결정
     if total_tokens > max_tokens:
-        st.info(f"📦 토큰 제한({max_tokens:,}) 초과. 정확한 배치 처리를 시작합니다.")
+        if logger:
+            logger.update_detail(f"토큰 제한({max_tokens:,}) 초과. 배치 처리 시작 (총 {total_tokens:,} 토큰)", "info")
         
         # 안전한 배치 크기 (실제 토큰 기준) - 토큰 활용률 극대화
         safe_max_tokens = 240000  # 24만 토큰으로 증가 (OpenAI 제한의 80%)
@@ -113,12 +208,14 @@ def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=2
             
             # 단일 문서가 배치 크기를 크게 초과하는 경우에만 경고 및 건너뛰기 (50% 여유를 두어 중요한 문서 손실 방지)
             if doc_tokens > safe_max_tokens * 1.5:  # 현재는 30만 토큰(200,000 * 1.5)
-                st.warning(f"⚠️ 문서 {i+1}이 배치 크기의 150%({safe_max_tokens * 1.5:,.0f} 토큰)를 초과합니다 ({doc_tokens:,} 토큰). 건너뜁니다.")
+                if logger:
+                    logger.update_detail(f"문서 {i+1}이 너무 큽니다 ({doc_tokens:,} 토큰). 건너뜀", "warning")
                 continue
             
-            # 진행상황 표시 (10개마다)
-            if (i + 1) % 10 == 0:
-                st.info(f"📝 문서 처리 진행: {i+1}/{len(documents)} (현재 배치 토큰: {current_tokens:,})")
+            # 진행상황 표시 (25개마다) - 빈도 줄임
+            if (i + 1) % 25 == 0:
+                if logger:
+                    logger.update_detail(f"벡터 임베딩 생성: {i+1}/{len(documents)} (배치 {batch_num})", "info")
             
             # 현재 배치에 추가해도 안전한지 확인
             if current_tokens + doc_tokens <= safe_max_tokens:
@@ -127,31 +224,33 @@ def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=2
             else:
                 # 현재 배치 처리
                 if current_batch:
-                    
                     try:
+                        if logger:
+                            logger.update_detail(f"벡터스토어 배치 {batch_num} 생성 중... ({len(current_batch)}개 문서)", "info")
+                        
                         if vectorstore is None:
-                            st.info(f"🏗️ 첫 번째 배치로 벡터스토어를 초기화합니다.")
                             vectorstore = FAISS.from_documents(current_batch, embedding_model)
                         else:
-                            st.info(f"🔗 기존 벡터스토어에 배치를 병합합니다.")
                             batch_vectorstore = FAISS.from_documents(current_batch, embedding_model)
                             vectorstore.merge_from(batch_vectorstore)
                         
-                        st.success(f"✅ 배치 {batch_num} 완료")
+                        if logger:
+                            logger.update_detail(f"벡터스토어 배치 {batch_num} 완료", "success")
                         batch_num += 1
                         
                     except Exception as e:
-                        st.error(f"❌ 배치 {batch_num} 처리 실패: {e}")
+                        if logger:
+                            logger.update_detail(f"배치 {batch_num} 처리 실패: {e}", "error")
                         
                         # 더 작은 배치로 재시도
                         if len(current_batch) > 1:
-                            st.info(f"🔄 배치를 절반으로 나누어 재시도합니다.")
+                            if logger:
+                                logger.update_detail(f"배치를 절반으로 나누어 재시도", "info")
                             
                             # 배치를 절반으로 나누어 재시도
                             mid = len(current_batch) // 2
                             for sub_batch in [current_batch[:mid], current_batch[mid:]]:
                                 if sub_batch:
-                                    sub_tokens = sum(count_actual_tokens(d.page_content) for d in sub_batch)
                                     try:
                                         if vectorstore is None:
                                             vectorstore = FAISS.from_documents(sub_batch, embedding_model)
@@ -159,11 +258,13 @@ def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=2
                                             batch_vectorstore = FAISS.from_documents(sub_batch, embedding_model)
                                             vectorstore.merge_from(batch_vectorstore)
                                     except Exception as e2:
-                                        st.error(f"    ❌ 소배치도 실패: {e2}")
+                                        if logger:
+                                            logger.update_detail(f"소배치 실패: {e2}", "error")
                                         continue
                         else:
                             # 단일 문서도 실패하는 경우 건너뛰기
-                            st.warning(f"⚠️ 단일 문서 처리 실패, 건너뜁니다: {e}")
+                            if logger:
+                                logger.update_detail(f"단일 문서 처리 실패, 건너뜀: {e}", "warning")
                 
                 # 새 배치 시작
                 current_batch = [doc]
@@ -171,19 +272,22 @@ def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=2
         
         # 마지막 배치 처리
         if current_batch:
-            st.info(f"📦 배치 {batch_num}: {len(current_batch)}개 문서, {current_tokens:,} 실제 토큰")
-            
             try:
+                if logger:
+                    logger.update_detail(f"마지막 벡터스토어 배치 {batch_num} 생성 중... ({len(current_batch)}개 문서)", "info")
+                
                 if vectorstore is None:
                     vectorstore = FAISS.from_documents(current_batch, embedding_model)
                 else:
                     batch_vectorstore = FAISS.from_documents(current_batch, embedding_model)
                     vectorstore.merge_from(batch_vectorstore)
                 
-                st.success(f"✅ 배치 {batch_num} 완료")
+                if logger:
+                    logger.update_detail(f"마지막 벡터스토어 배치 {batch_num} 완료", "success")
                 
             except Exception as e:
-                st.error(f"❌ 마지막 배치 처리 실패: {e}")
+                if logger:
+                    logger.update_detail(f"마지막 배치 처리 실패: {e}", "error")
                 
                 # 마지막 배치도 분할 시도
                 if len(current_batch) > 1:
@@ -196,25 +300,28 @@ def create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=2
                                 else:
                                     batch_vectorstore = FAISS.from_documents(sub_batch, embedding_model)
                                     vectorstore.merge_from(batch_vectorstore)
-                                st.success(f"✅ 마지막 소배치 완료: {len(sub_batch)}개 문서")
+                                if logger:
+                                    logger.update_detail(f"소배치 완료: {len(sub_batch)}개 문서", "success")
                             except:
                                 continue
         
         if vectorstore is None:
             raise Exception("모든 문서 처리에 실패했습니다.")
         
-        st.success(f"🎉 모든 배치 처리 완료!")
         return vectorstore
     
     else:
         # 토큰 제한 내에 있으면 직접 처리
         try:
+            if logger:
+                logger.update_detail(f"토큰 제한 내 직접 처리 ({total_tokens:,} 토큰)", "info")
             return FAISS.from_documents(documents, embedding_model)
         except Exception as e:
-            st.error(f"❌ 직접 처리 실패: {e}")
+            if logger:
+                logger.update_detail(f"직접 처리 실패: {e}", "error")
             if "max_tokens_per_request" in str(e):
                 # 강제 분할 처리로 재귀 호출 - 적당한 토큰 제한 적용
-                return create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=150000)
+                return create_vectorstore_with_token_limit(documents, embedding_model, max_tokens=150000, logger=logger)
             else:
                 raise e
 
@@ -236,7 +343,7 @@ def create_embedding_model():
         return embedding_model
     except Exception as e:
         if "max_tokens_per_request" in str(e):
-            st.info(f"토큰 제한으로 인해 배치 크기를 {EMBEDDING_BATCH_SIZE_RETRY}로 조정합니다.")
+            # 로그 출력 제거 - 이미 상위 함수에서 처리됨
             return OpenAIEmbeddings(
                 model=OPENAI_EMBEDDING_MODEL,
                 chunk_size=EMBEDDING_BATCH_SIZE_RETRY,
@@ -296,7 +403,7 @@ def apply_semantic_chunking(text_chunk: str, embedding_model) -> list:
         
     except Exception as e:
         # SemanticChunker 실패 시 고정 크기 분할로 폴백
-        st.warning(f"SemanticChunker 실패, 고정 크기 분할로 폴백: {e}")
+        # 로그 출력 제거 - 정상적인 처리 과정의 일부
         fallback_splitter = RecursiveCharacterTextSplitter(
             chunk_size=8000,   # 적절한 중간 크기 (25,000의 1/3 정도)
             chunk_overlap=100, # 1단계와 동일한 겹침
@@ -370,7 +477,8 @@ def read_pdf(path):
                     page_text = normalize_text(page_text)
                     full_text += page_text + "\n"
             except Exception as e:
-                st.warning(f"페이지 {page_num} 처리 중 오류: {str(e)}")
+                # 로그 출력 제거 - 정상적인 에러 처리
+                continue
     return full_text
 
 def read_txt(path):
@@ -529,12 +637,15 @@ def extract_metadata_from_filename(filename):
     }
 
 # 문서 처리 및 청킹
-def process_document(file_path):
+def process_document(file_path, logger=None):
     """문서를 읽고 SemanticChunker를 사용하여 의미적 청킹을 수행합니다.
     
     SemanticChunker는 문서의 의미를 고려하여 자동으로 적절한 크기의 청크로 분할합니다.
     """
     filename = os.path.basename(file_path)
+    
+    if logger:
+        logger.update_detail(f"📖 텍스트 추출 중: {filename}")
     
     # 문서 읽기
     if file_path.endswith(".pdf"):
@@ -544,14 +655,18 @@ def process_document(file_path):
     elif file_path.endswith(".txt"):
         text = read_txt(file_path)
     else:
-        st.error(f"🚨 DEBUG: 지원되지 않는 파일 형식 - {filename}")
+        # 로그 출력 제거 - 정상적인 에러 처리
         return []
     
     
     # 텍스트가 비어있으면 처리 중단
     if not text:
-        st.warning(f"⚠️ {filename}에서 텍스트를 추출하지 못했습니다. 건너뜁니다.")
+        if logger:
+            logger.update_detail(f"❌ {filename}: 텍스트 추출 실패", "error")
         return []
+    
+    if logger:
+        logger.update_detail(f"✅ 텍스트 추출 완료: {len(text):,}자")
     
     # 텍스트 정규화
     original_text = text
@@ -559,7 +674,6 @@ def process_document(file_path):
     
     # 정규화 과정에서 텍스트가 너무 많이 제거되었는지 확인
     if len(text) < len(original_text) * 0.1:  # 90% 이상 제거된 경우
-        st.warning(f"  ⚠️ 텍스트가 너무 많이 제거되었습니다. 원본: {len(original_text)}자 → 정규화: {len(text)}자")
         # 정규화를 건너뛰고 원본 텍스트 사용
         text = original_text
         
@@ -568,6 +682,9 @@ def process_document(file_path):
     
     if len(text) <= LARGE_DOCUMENT_THRESHOLD:
         # 작은 문서: SemanticChunker 직접 사용
+        if logger:
+            logger.update_detail(f"🧠 의미적 청킹 중...")
+        
         embedding_model = create_embedding_model()
         
         try:
@@ -587,6 +704,9 @@ def process_document(file_path):
             
     else:
         # 대용량 문서: 하이브리드 방식 (사전 분할 + SemanticChunker)
+        if logger:
+            logger.update_detail(f"🧠 대용량 문서 청킹 중...")
+        
         text_splitter = create_text_splitter()
         pre_chunks = text_splitter.split_text(text)
         
@@ -595,6 +715,9 @@ def process_document(file_path):
         embedding_model = create_embedding_model()  # SemanticChunker용 임베딩 모델
         
         for i, pre_chunk in enumerate(pre_chunks):
+            if logger and (i + 1) % 5 == 0:  # 5개마다 진행상황 표시
+                logger.update_detail(f"🔄 의미적 청킹 진행: {i+1}/{len(pre_chunks)}")
+            
             try:
                 semantic_chunks = apply_semantic_chunking(pre_chunk, embedding_model)
                 all_chunks.extend(semantic_chunks)
@@ -616,6 +739,9 @@ def process_document(file_path):
     
     # 3단계: 중복 청크 제거 (법령 문서 정확성 확보)
     chunks = remove_duplicate_chunks(chunks)
+    
+    if logger:
+        logger.update_detail(f"✅ 청킹 완료: {len(chunks)}개 문서 생성")
     
     # 파일명에서 추가 메타데이터 추출
     additional_metadata = extract_metadata_from_filename(filename)
@@ -650,158 +776,154 @@ def build_vector_index_from_uploaded_files(uploaded_files):
         st.warning("업로드된 파일이 없습니다.")
         return False
     
-    # 단계별 메시지를 위한 플레이스홀더들
-    main_status_placeholder = st.empty()
-    file_status_placeholder = st.empty()
-    index_status_placeholder = st.empty()
+    # 통합 로거 생성
+    logger = UnifiedLogger()
+    logger.start("AI 문서 학습 시작")
     
-    main_status_placeholder.info("📂 문서 인덱싱 시작")
-    
-    # 문서 저장 디렉토리 생성
-    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 임베딩 모델 초기화
-    embedding_model = create_embedding_model()
-    
-    # 분류별로 문서 그룹화
-    gas_documents = []
-    power_documents = []
-    other_documents = []
-    
-    total_files = len(uploaded_files)
-    
-    # 파일별로 처리 및 분류
-    for i, uploaded_file in enumerate(uploaded_files, 1):
-        file_status_placeholder.info(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
+    try:
+        # 문서 저장 디렉토리 생성
+        docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
         
-        # 실제 파일을 docs 디렉토리에 저장
-        file_path = docs_dir / uploaded_file.name
+        # 임베딩 모델 초기화
+        logger.update_main("임베딩 모델 초기화", "진행중", "🔧")
+        embedding_model = create_embedding_model()
         
-        # 이미 동일한 파일명이 존재하는지 확인
-        if file_path.exists():
-            file_status_placeholder.empty()
-            main_status_placeholder.empty()
-            st.warning(f"⚠️ '{uploaded_file.name}' 파일이 이미 존재합니다. 인덱스 생성을 건너뜁니다.")
-            return False
+        # 분류별로 문서 그룹화
+        gas_documents = []
+        power_documents = []
+        other_documents = []
         
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getvalue())
+        total_files = len(uploaded_files)
+        logger.update_main(f"파일 처리 ({total_files}개)", "진행중", "📝")
         
-        try:
-            # 파일 분류
-            category = classify_file(uploaded_file.name)
+        # 파일별로 처리 및 분류
+        for i, uploaded_file in enumerate(uploaded_files, 1):
+            logger.update_detail(f"[{i}/{total_files}] 처리 중: {uploaded_file.name}")
             
-            documents = process_document(str(file_path))
+            # 실제 파일을 docs 디렉토리에 저장
+            file_path = docs_dir / uploaded_file.name
             
-            # 분류별로 문서 추가
-            if category == 'gas':
-                gas_documents.extend(documents)
-            elif category == 'power':
-                power_documents.extend(documents)
-            else:
-                other_documents.extend(documents)
-            
-            # 메모리 최적화
-            del documents
-            gc.collect()
-            
-        except Exception as e:
-            file_status_placeholder.empty()
-            main_status_placeholder.empty()
-            st.error(f"❌ 파일 처리 오류: {e}")
-            # 오류 발생 시 저장된 파일 삭제
+            # 이미 동일한 파일명이 존재하는지 확인
             if file_path.exists():
-                file_path.unlink()
-            continue
-    
-    # 파일 처리 완료 메시지 삭제
-    file_status_placeholder.empty()
-    
-    # 분류별로 인덱스 생성
-    categories = [
-        ('gas', gas_documents, 'Gas'),
-        ('power', power_documents, 'Power'),
-        ('other', other_documents, 'Other')
-    ]
-    
-    success_count = 0
-    for category, documents, category_name in categories:
-        if len(documents) == 0:
-            continue
+                logger.error(f"'{uploaded_file.name}' 파일이 이미 존재합니다.")
+                return False
             
-        index_status_placeholder.info(f"🔧 {category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
+            
+            try:
+                # 파일 분류
+                category = classify_file(uploaded_file.name)
+                
+                documents = process_document(str(file_path), logger)
+                
+                # 분류별로 문서 추가
+                if category == 'gas':
+                    gas_documents.extend(documents)
+                elif category == 'power':
+                    power_documents.extend(documents)
+                else:
+                    other_documents.extend(documents)
+                
+                logger.update_detail(f"✅ {uploaded_file.name} 처리 완료 ({category} 분류, {len(documents)}개 문서)", "success")
+                
+                # 메모리 최적화
+                del documents
+                gc.collect()
+                
+            except Exception as e:
+                logger.error(f"파일 처리 오류: {e}")
+                # 오류 발생 시 저장된 파일 삭제
+                if file_path.exists():
+                    file_path.unlink()
+                return False
         
-        # 배치 단위로 임베딩 처리
-        try:
-            vectorstore = create_vectorstore_with_token_limit(documents, embedding_model)
-        except Exception as e:
-            if "max_tokens_per_request" in str(e):
-                try:
-                    medium_embedding_model = OpenAIEmbeddings(
-                        model=OPENAI_EMBEDDING_MODEL,
-                        chunk_size=EMBEDDING_BATCH_SIZE_RETRY,
-                        max_retries=OPENAI_MAX_RETRIES
-                    )
-                    vectorstore = create_vectorstore_with_token_limit(documents, medium_embedding_model)
-                except Exception as e2:
-                    if "max_tokens_per_request" in str(e2):
-                        small_embedding_model = OpenAIEmbeddings(
+        # 분류별로 인덱스 생성
+        logger.update_main("벡터 인덱스 생성", "진행중", "🔧")
+        
+        categories = [
+            ('gas', gas_documents, 'Gas'),
+            ('power', power_documents, 'Power'),
+            ('other', other_documents, 'Other')
+        ]
+        
+        success_count = 0
+        for category, documents, category_name in categories:
+            if len(documents) == 0:
+                logger.update_detail(f"{category_name} 분류: 문서 없음, 건너뜀")
+                continue
+                
+            logger.update_detail(f"{category_name} 인덱스 생성 중... (문서 수: {len(documents)}개)")
+            
+            # 배치 단위로 임베딩 처리
+            try:
+                vectorstore = create_vectorstore_with_token_limit(documents, embedding_model, logger=logger)
+            except Exception as e:
+                if "max_tokens_per_request" in str(e):
+                    try:
+                        logger.update_detail(f"{category_name}: 토큰 제한으로 배치 크기 조정 (재시도 1/2)", "warning")
+                        medium_embedding_model = OpenAIEmbeddings(
                             model=OPENAI_EMBEDDING_MODEL,
-                            chunk_size=EMBEDDING_BATCH_SIZE_FINAL,
+                            chunk_size=EMBEDDING_BATCH_SIZE_RETRY,
                             max_retries=OPENAI_MAX_RETRIES
                         )
-                        vectorstore = create_vectorstore_with_token_limit(documents, small_embedding_model)
-                    else:
-                        raise e2
-            else:
-                raise e
+                        vectorstore = create_vectorstore_with_token_limit(documents, medium_embedding_model, logger=logger)
+                    except Exception as e2:
+                        if "max_tokens_per_request" in str(e2):
+                            logger.update_detail(f"{category_name}: 토큰 제한으로 배치 크기 재조정 (재시도 2/2)", "warning")
+                            small_embedding_model = OpenAIEmbeddings(
+                                model=OPENAI_EMBEDDING_MODEL,
+                                chunk_size=EMBEDDING_BATCH_SIZE_FINAL,
+                                max_retries=OPENAI_MAX_RETRIES
+                            )
+                            vectorstore = create_vectorstore_with_token_limit(documents, small_embedding_model, logger=logger)
+                        else:
+                            raise e2
+                else:
+                    raise e
 
-        # 인덱스 저장
-        index_dir = get_index_dir(category)
-        try:
-            vectorstore.save_local(str(index_dir))
-            index_status_placeholder.success(f"💾 {category_name} 인덱스 저장 완료: {index_dir}")
-            success_count += 1
-        except Exception as e:
-            index_status_placeholder.empty()
-            main_status_placeholder.empty()
-            st.error(f"❌ {category_name} 인덱스 저장 오류: {e}")
+            # 인덱스 저장
+            index_dir = get_index_dir(category)
+            try:
+                vectorstore.save_local(str(index_dir))
+                logger.update_detail(f"{category_name} 인덱스 저장 완료", "success")
+                success_count += 1
+            except Exception as e:
+                logger.error(f"{category_name} 인덱스 저장 오류: {e}")
+                return False
+        
+        if success_count > 0:
+            logger.success(f"🎉 {success_count}개 분류별 인덱스 생성 완료")
+            return True
+        else:
+            logger.error("❌ 인덱스 생성에 실패했습니다.")
             return False
-    
-    # 모든 단계 완료 후 플레이스홀더들 정리
-    main_status_placeholder.empty()
-    index_status_placeholder.empty()
-    
-    if success_count > 0:
-        st.success(f"🎉 {success_count}개 분류별 인덱스 생성 완료")
-        return True
-    else:
-        st.error("❌ 인덱스 생성에 실패했습니다.")
+            
+    except Exception as e:
+        logger.error(f"예상치 못한 오류: {e}")
         return False
 
 def reload_backend_indexes():
     """백엔드의 인덱스를 다시 로드합니다."""
-    # 로딩 메시지를 위한 플레이스홀더 생성
-    loading_placeholder = st.empty()
+    # 통합 로거 생성
+    logger = UnifiedLogger()
+    logger.start("백엔드 인덱스 리로드")
     
     try:
-        loading_placeholder.info("🔄 백엔드 인덱스 리로드 중...")
+        logger.update_detail("API 서버에 리로드 요청 중...")
         response = requests.post(RELOAD_API_URL)
         response.raise_for_status()
         
         result = response.json()
         if result.get("success"):
-            loading_placeholder.empty()  # 로딩 메시지 삭제
-            st.success("✅ 백엔드 인덱스 리로드 완료!")
+            logger.success("✅ 백엔드 인덱스 리로드 완료!")
             return True
         else:
-            loading_placeholder.empty()  # 로딩 메시지 삭제
-            st.error(f"❌ 백엔드 인덱스 리로드 실패: {result.get('message', '알 수 없는 오류')}")
+            logger.error(f"백엔드 인덱스 리로드 실패: {result.get('message', '알 수 없는 오류')}")
             return False
     except Exception as e:
-        loading_placeholder.empty()  # 로딩 메시지 삭제
-        st.error(f"❌ 백엔드 인덱스 리로드 중 오류: {str(e)}")
+        logger.error(f"백엔드 인덱스 리로드 중 오류: {str(e)}")
         st.warning("⚠️ FastAPI 서버가 실행 중인지 확인해주세요.")
         return False
 
@@ -1205,22 +1327,17 @@ def show_upload_page():
  
     if st.button("▶️ AI 문서 학습 시작", type="primary", disabled=not uploaded_files):
         try:
-            with st.spinner("문서를 처리하고 인덱스를 생성하고 있습니다..."):
-                success = build_vector_index_from_uploaded_files(uploaded_files)
-                if success:
-                    st.success("✅ 인덱스 생성이 완료되었습니다!")
-                    
-                    # 백엔드 인덱스 리로드
-                    reload_success = reload_backend_indexes()
-                    if reload_success:
-                        st.success("🎉 모든 작업이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
-                    else:
-                        st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 수동으로 학습 문서 정보 리로드] 버튼을 눌러 주세요.")
+            success = build_vector_index_from_uploaded_files(uploaded_files)
+            if success:
+                # 백엔드 인덱스 리로드
+                reload_success = reload_backend_indexes()
+                if reload_success:
+                    st.success("🎉 모든 작업이 완료되었습니다! 이제 채팅 탭에서 질문할 수 있습니다.")
                 else:
-                    st.error("❌ 인덱스 생성에 실패했습니다. 다시 시도해주세요.")
+                    st.warning("⚠️ 인덱스는 생성되었지만 백엔드 리로드에 실패했습니다. FastAPI 서버를 재시작하거나 [학습 문서 정보 리로드] 버튼을 눌러 주세요.")
         except Exception as e:
             st.error(f"❌ 인덱스 생성 중 오류가 발생했습니다: {str(e)}")
-            st.error("API 서버가 실행되지 않았을 수 있습니다. FastAPI 서버를 먼저 실행해주세요.")
+            st.warning("API 서버가 실행되지 않았을 수 있습니다. FastAPI 서버를 먼저 실행해주세요.")
     
     st.write("")  # 공백 추가
 
