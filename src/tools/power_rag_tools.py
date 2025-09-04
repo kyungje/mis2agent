@@ -262,6 +262,30 @@ class PowerRAGTool(BaseTool):
                 else:
                     logger.info("Using standard MultiQueryRetriever")
                     docs = self._retriever.get_relevant_documents(query)
+                    
+                    # MultiQueryRetriever가 실패한 경우 직접 벡터 검색 시도
+                    if not docs or len(docs) == 0:
+                        logger.warning("MultiQueryRetriever returned no results, trying direct vector search")
+                        try:
+                            # 직접 벡터 검색 시도
+                            docs = self._vectorstore.similarity_search(query, k=20)
+                            logger.info(f"Direct vector search returned {len(docs)} documents")
+                            
+                            # 여전히 실패하면 키워드 기반 검색 시도
+                            if not docs or len(docs) == 0:
+                                logger.warning("Direct vector search also failed, trying keyword-based search")
+                                # 질문에서 핵심 키워드 추출
+                                keywords = ['무위험자산수익률', '비용평가', '세부운영규정', '발전기', '열량단가', '연간가용시간']
+                                for keyword in keywords:
+                                    if keyword in query:
+                                        logger.info(f"Trying keyword search with: {keyword}")
+                                        docs = self._vectorstore.similarity_search(keyword, k=10)
+                                        if docs:
+                                            logger.info(f"Keyword search with '{keyword}' returned {len(docs)} documents")
+                                            break
+                        except Exception as e:
+                            logger.error(f"Direct vector search failed: {e}")
+                            docs = []
             
             # 지역별 필터링 적용
             if target_region and docs:
@@ -270,9 +294,14 @@ class PowerRAGTool(BaseTool):
                 for doc in docs:
                     source = doc.metadata.get('source', '')
                     doc_region = extract_region_from_filename(source)
+                    # 지역명이 있으면 해당 지역과 매칭, 없으면 일반 문서로 포함
                     if doc_region and target_region in doc_region:
                         filtered_docs.append(doc)
                         logger.info(f"  ✓ Included: {source} (region: {doc_region})")
+                    elif not doc_region:
+                        # 지역명이 없는 문서는 일반 문서로 포함
+                        filtered_docs.append(doc)
+                        logger.info(f"  ✓ Included: {source} (no region - general document)")
                     else:
                         logger.info(f"  ✗ Excluded: {source} (region: {doc_region})")
                 
@@ -312,9 +341,9 @@ class PowerRAGTool(BaseTool):
                         if keyword.lower() in content:
                             relevance_score += 1
                     
-                    # 최소 2개 이상의 키워드가 매칭되거나, 전력 관련 키워드가 있으면 포함
-                    if (relevance_score >= 2 or 
-                        any(word in content for word in ['전력', '전기', '안전', '책임', '관리', '의무'])):
+                    # 최소 1개 이상의 키워드가 매칭되거나, 전력 관련 키워드가 있으면 포함
+                    if (relevance_score >= 1 or 
+                        any(word in content for word in ['전력', '전기', '안전', '책임', '관리', '의무', '발전', '열량', '단가', '발전소', '발전기', '전기사용', '전기계량', '전기설비', '전기안전', '전기공급계약', '전기공급규정', '한국전력', '전기사업법', '전력거래', '송전', '배전', '발전', 'kepco', '전기료', '전기사용량', '전기계량기', '전기공급업', '전기판매업', '비용평가'])):
                         relevant_docs.append(doc)
                         logger.info(f"  ✓ Relevant: {doc.metadata.get('source', 'unknown')} (score: {relevance_score})")
                     else:

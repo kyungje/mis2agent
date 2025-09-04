@@ -782,7 +782,7 @@ def build_vector_index_from_uploaded_files(uploaded_files):
     
     try:
         # 문서 저장 디렉토리 생성
-        docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+        docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
         docs_dir.mkdir(parents=True, exist_ok=True)
         
         # 임베딩 모델 초기화
@@ -1042,19 +1042,43 @@ def extract_document_links(content: str) -> list:
 
 def find_actual_file_path(docs_dir: Path, filename: str) -> Path:
     """파일명을 정확히 찾기 위해 다양한 패턴으로 검색합니다."""
+    print(f"DEBUG: 찾는 파일명: {filename}")
+    print(f"DEBUG: 검색 디렉토리: {docs_dir}")
+    
+    # 디렉토리의 모든 파일 나열
+    try:
+        all_files = list(docs_dir.iterdir())
+        print(f"DEBUG: 디렉토리의 모든 파일: {[f.name for f in all_files if f.is_file()]}")
+    except Exception as e:
+        print(f"DEBUG: 디렉토리 읽기 오류: {e}")
+    
     # 1. 정확한 파일명으로 찾기
     file_path = docs_dir / filename
+    print(f"DEBUG: 정확한 파일명으로 검색: {file_path}")
     if file_path.exists():
+        print(f"DEBUG: 파일 발견! {file_path}")
         return file_path
+    
+    # 1-1. 파일명에 대괄호가 있는 경우, 그대로 검색
+    if '[' in filename and ']' in filename:
+        # 이미 대괄호가 있는 파일명이므로 그대로 사용
+        file_path = docs_dir / filename
+        print(f"DEBUG: 대괄호 포함 파일명으로 검색: {file_path}")
+        if file_path.exists():
+            print(f"DEBUG: 대괄호 포함 파일명으로 파일 발견! {file_path}")
+            return file_path
     
     # 2. 대괄호가 빠진 경우를 고려해서 찾기
     if not filename.startswith('['):
+        print(f"DEBUG: 대괄호가 없는 파일명, 키워드 검색 시작")
         keywords = ['도시가스', '전력', '기타']
         for keyword in keywords:
             if keyword in filename:
                 bracketed_filename = f"[{keyword}]{filename}"
                 file_path = docs_dir / bracketed_filename
+                print(f"DEBUG: 키워드 {keyword}로 검색: {file_path}")
                 if file_path.exists():
+                    print(f"DEBUG: 키워드 검색으로 파일 발견! {file_path}")
                     return file_path
     
     # 3. 대괄호가 있는 경우, 대괄호를 제거한 형태로도 찾기
@@ -1064,45 +1088,82 @@ def find_actual_file_path(docs_dir: Path, filename: str) -> Path:
         if file_path.exists():
             return file_path
     
-    # 4. 정확한 지역명 매칭으로 검색 (개선된 방식)
+    # 4. 지역명 우선 매칭 검색
     try:
-        # 파일명에서 지역명 추출
+        print(f"DEBUG: 지역명 우선 매칭 검색 시작")
+        
+        # 요청 파일명에서 지역명 추출
         def extract_region_from_filename(fname):
             """파일명에서 지역명을 추출합니다."""
-            regions = ['서울특별시', '강원도', '경기도', '경상북도', '전라남도', '충청북도', '부산']
+            regions = ['서울특별시', '강원도', '경기도', '경상북도', '전라남도', '충청북도', '부산', '서울', '부산광역시', '대구광역시', '인천광역시', '광주광역시', '대전광역시', '울산광역시', '세종특별자치시', '경기도', '강원도', '충청북도', '충청남도', '전라북도', '전라남도', '경상북도', '경상남도', '제주특별자치도']
             for region in regions:
                 if region in fname:
                     return region
             return None
         
         requested_region = extract_region_from_filename(filename)
+        print(f"DEBUG: 요청 파일명에서 추출한 지역: {requested_region}")
         
-        # 지역명이 있는 경우 정확한 지역 파일만 찾기
+        # 지역명이 있는 경우, 정확한 지역 파일만 찾기
         if requested_region:
-            for file in docs_dir.iterdir():
-                if file.is_file() and requested_region in file.name:
-                    # 추가로 파일 내용이 유사한지 확인
-                    clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower()
-                    clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower()
-                    
-                    # 파일명의 주요 키워드들이 일치하는지 확인
-                    request_keywords = set(clean_request.split())
-                    file_keywords = set(clean_file.split())
-                    
-                    # 60% 이상 키워드가 일치하면 해당 파일로 선택
-                    if len(request_keywords.intersection(file_keywords)) / len(request_keywords) >= 0.6:
-                        return file
-        
-        # 지역명이 없는 경우 기존 방식으로 폴백
-        else:
+            print(f"DEBUG: 지역명 '{requested_region}'으로 정확한 지역 파일 검색")
             for file in docs_dir.iterdir():
                 if file.is_file():
-                    clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower()
-                    clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower()
-                    
-                    if clean_request in clean_file or clean_file in clean_request:
+                    file_region = extract_region_from_filename(file.name)
+                    if file_region and requested_region in file_region:
+                        # 추가로 파일 내용이 유사한지 확인
+                        clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                        clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower()
+                        
+                        # 파일명의 주요 키워드들이 일치하는지 확인
+                        request_keywords = set(clean_request.split())
+                        file_keywords = set(clean_file.split())
+                        
+                        # 60% 이상 키워드가 일치하면 해당 파일로 선택
+                        if len(request_keywords.intersection(file_keywords)) / len(request_keywords) >= 0.6:
+                            print(f"DEBUG: 지역명 매칭으로 파일 발견! {file}")
+                            return file
+        
+        # 지역명이 없거나 지역명 매칭에 실패한 경우, 부분 매칭으로 검색
+        print(f"DEBUG: 부분 매칭 검색 시작")
+        for file in docs_dir.iterdir():
+            if file.is_file():
+                print(f"DEBUG: 검사 중인 파일: {file.name}")
+                
+                # 파일명 정규화 (대괄호, 공백, 특수문자 처리)
+                clean_request = filename.replace('[', '').replace(']', '').replace('+', ' ').lower().strip()
+                clean_file = file.name.replace('[', '').replace(']', '').replace('+', ' ').lower().strip()
+                
+                print(f"DEBUG: 정규화된 요청: '{clean_request}'")
+                print(f"DEBUG: 정규화된 파일: '{clean_file}'")
+                
+                # 1. 정확한 부분 문자열 매칭
+                if clean_request in clean_file or clean_file in clean_request:
+                    print(f"DEBUG: 부분 문자열 매칭으로 파일 발견! {file}")
+                    return file
+                
+                # 2. 키워드 기반 매칭
+                request_keywords = set(clean_request.split())
+                file_keywords = set(clean_file.split())
+                
+                # 공통 키워드가 있는지 확인
+                common_keywords = request_keywords.intersection(file_keywords)
+                if common_keywords:
+                    print(f"DEBUG: 공통 키워드 발견: {common_keywords}")
+                    # 50% 이상 키워드가 일치하면 해당 파일로 선택
+                    if len(common_keywords) / len(request_keywords) >= 0.5:
+                        print(f"DEBUG: 키워드 매칭으로 파일 발견! {file}")
                         return file
-    except Exception:
+                
+                # 3. 특정 키워드가 포함된 경우 (전력, 도시가스 등)
+                important_keywords = ['전력', '도시가스', '기타', '비용평가', '운영규정']
+                for keyword in important_keywords:
+                    if keyword in clean_request and keyword in clean_file:
+                        print(f"DEBUG: 중요 키워드 '{keyword}' 매칭으로 파일 발견! {file}")
+                        return file
+                        
+    except Exception as e:
+        print(f"DEBUG: 검색 중 오류: {e}")
         pass
     
     return None
@@ -1119,7 +1180,7 @@ def display_chat_history():
                 def create_download_link(match):
                     filename = match.group(1)
                     # 파일 경로 생성 (업로드 경로와 일치하도록 수정)
-                    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+                    docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
                     file_path = find_actual_file_path(docs_dir, filename)
                     
                     if file_path and file_path.exists():
@@ -1355,7 +1416,7 @@ def show_upload_page():
     with col1:
         if GAS_INDEX_DIR.exists() and any(GAS_INDEX_DIR.iterdir()):
             # 저장된 문서 수 계산
-            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
             gas_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'gas'] if docs_dir.exists() else []
             doc_count = len(gas_docs)
             
@@ -1388,7 +1449,7 @@ def show_upload_page():
     with col2:
         if POWER_INDEX_DIR.exists() and any(POWER_INDEX_DIR.iterdir()):
             # 저장된 문서 수 계산
-            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
             power_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'power'] if docs_dir.exists() else []
             doc_count = len(power_docs)
             
@@ -1421,7 +1482,7 @@ def show_upload_page():
     with col3:
         if OTHER_INDEX_DIR.exists() and any(OTHER_INDEX_DIR.iterdir()):
             # 저장된 문서 수 계산
-            docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+            docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
             other_docs = [f for f in docs_dir.iterdir() if f.is_file() and classify_file(f.name) == 'other'] if docs_dir.exists() else []
             doc_count = len(other_docs)
             
@@ -1454,7 +1515,7 @@ def show_upload_page():
     st.write("")  # 공백 추가
     
     # 저장된 문서 파일 목록 표시
-    docs_dir = Path(__file__).parent.parent.parent / "vectordb" / "docs"
+    docs_dir = Path(__file__).parent.parent / "vectordb" / "docs"
     if docs_dir.exists() and any(docs_dir.iterdir()):
         # 숨김 파일 제외하고 파일 목록 가져오기
         files = [f for f in docs_dir.iterdir() if f.is_file() and not f.name.startswith('.')]
